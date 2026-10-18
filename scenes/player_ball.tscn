@@ -1,0 +1,37 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/ball.gd" id="1_ball"]
+[ext_resource type="Texture2D" path="res://assets/images/characters/player_ball/main_ball.png" id="2_texture"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_ball"]
+friction = 1.2
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_ball"]
+radius = 48.0
+
+[node name="Ball" type="RigidBody2D"]
+z_index = 10
+physics_material_override = SubResource("PhysicsMaterial_ball")
+continuous_cd = 1
+linear_damp = 0.05
+angular_damp = 0.4
+script = ExtResource("1_ball")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+scale = Vector2(0.0850441, 0.085)
+texture = ExtResource("2_texture")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_ball")
+
+[node name="GroundProbe" type="RayCast2D" parent="."]
+target_position = Vector2(0, 88)
+
+[node name="GrappleLine" type="Line2D" parent="."]
+z_index = -1
+points = PackedVector2Array(0, 0, 0, 0)
+width = 6.0
+default_color = Color(0, 0, 0, 0.95)
+
+[node name="Camera2D" type="Camera2D" parent="."]
+zoom = Vector2(0.85, 0.85)
