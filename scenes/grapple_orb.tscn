@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/grapple/grapple_orb.gd" id="1_orb"]
+
+[sub_resource type="CircleShape2D" id="CircleShape_orb"]
+resource_local_to_scene = true
+radius = 108.0
+
+[node name="GrappleOrb" type="Area2D" groups=["grapple_orbs"]]
+z_index = 6
+collision_layer = 2
+collision_mask = 0
+monitoring = false
+script = ExtResource("1_orb")
+
+[node name="GrappleShape" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape_orb")

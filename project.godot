@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="multi_grappler"
-run/main_scene="res://base_level.tscn"
+run/main_scene="res://scenes/game_shell.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 config/icon="res://icon.svg"
 
@@ -24,6 +24,10 @@ window/stretch/mode="canvas_items"
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/level_sketch/plugin.cfg")
+
+[gui]
+
+theme/custom="res://assets/themes/game_theme.tres"
 
 [rendering]
 

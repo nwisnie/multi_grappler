@@ -11,10 +11,14 @@ const SUPPORT_MIN_UP := 0.05
 const CAMERA_FOLLOW_SPEED := 4.5
 const CAMERA_LOOK_AHEAD := 80.0
 const CAMERA_VERTICAL_OFFSET := -30.0
-const CAMERA_BASE_ZOOM := Vector2(0.85, 0.85)
-const CAMERA_MAX_ZOOM_OUT := Vector2(0.52, 0.52)
+const CAMERA_BASE_ZOOM := Vector2(0.65, 0.65)
+const CAMERA_MAX_ZOOM_OUT := Vector2(0.45, 0.45)
 const CAMERA_ZOOM_SPEED := 3.5
 const GRAPPLE_MAX_DISTANCE := 2200.0
+const GRAPPLE_AIM_RESPONSE := 12.0
+const GrappleCursorScript := preload("res://scripts/grapple/grapple_cursor.gd")
+const GrappleEffectScript := preload("res://scripts/grapple/grapple_effect.gd")
+const GRAPPLE_VISUAL_SHOOT_SPEED := 10000.0
 const GRAPPLE_MIN_LENGTH := 24.0
 const GRAPPLE_PULL_FORCE := 12000.0
 const GRAPPLE_PULL_SPEED_LIMIT := 720.0
@@ -90,10 +94,34 @@ var jab_meter: EnemyHealthBar
 var player_ui_layer: CanvasLayer
 var heart_texture_rect: TextureRect
 var player_health_bar: EnemyHealthBar
+var grapple_cursor: Node2D
+var grapple_target_available := false
+var grapple_target_position := Vector2.ZERO
+var grapple_aim_screen_position := Vector2.ZERO
+var grapple_aim_initialized := false
+var highlighted_grapple_target: Node
+var grapple_effect: Node2D
+var grapple_launch_position := Vector2.ZERO
+var grapple_visual_time := 0.0
+var grapple_visual_duration := 0.1
+var grapple_contact_normal := Vector2.UP
+var grapple_hits_terrain := false
+var grapple_retracting := false
+var grapple_retract_origin := Vector2.ZERO
+var grapple_retract_time := 0.0
+var grapple_retract_duration := 0.1
+var grapple_targets_orb := false
 
 @export var initial_camera_zoom: Vector2 = CAMERA_BASE_ZOOM
 @export var speed_zoom_out: Vector2 = CAMERA_MAX_ZOOM_OUT
+@export var show_grapple_cursor := false
 @export_range(1, 1000, 1) var max_health: int = 20
+@export_group("Orb Grapple")
+@export_range(24.0, 200.0, 1.0) var orb_grapple_release_distance := 88.0
+@export_range(12000.0, 40000.0, 500.0) var orb_grapple_pull_force := 18000.0
+@export_range(720.0, 1800.0, 10.0) var orb_grapple_speed_limit := 1050.0
+@export_range(0.0, 24.0, 0.5) var orb_grapple_steering := 12.0
+@export_group("")
 
 var current_health: int = 20
 var damage_immunity_remaining := 0.0
@@ -143,9 +171,20 @@ func _ready() -> void:
 	camera.zoom = initial_camera_zoom
 	grapple_line.top_level = true
 	grapple_line.visible = false
+	grapple_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	grapple_line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	grapple_effect = GrappleEffectScript.new()
+	grapple_effect.name = "GrappleEffect"
+	grapple_effect.top_level = true
+	grapple_effect.z_index = 15
+	grapple_effect.visible = false
+	add_child(grapple_effect)
 	_setup_jab_nodes()
 	_setup_jab_meter()
 	_setup_player_ui()
+	grapple_cursor = GrappleCursorScript.new()
+	grapple_cursor.name = "GrappleCursor"
+	player_ui_layer.add_child(grapple_cursor)
 
 func reset_spawn_orientation() -> void:
 	rotation = 0.0
@@ -153,12 +192,19 @@ func reset_spawn_orientation() -> void:
 	if sprite != null:
 		sprite.global_rotation = SPRITE_UPRIGHT_ROTATION
 
+func _exit_tree() -> void:
+	_set_highlighted_grapple_target(null)
+
 func _process(delta: float) -> void:
 	_update_squash_and_stretch(delta)
 	_update_jab_visual_line()
 	_update_heart_ui(delta)
+	_update_grapple_cursor()
+	_update_grapple_visuals(delta)
 
 func _physics_process(delta: float) -> void:
+	_update_grapple_aim(delta)
+	_refresh_grapple_target()
 	damage_immunity_remaining = maxf(damage_immunity_remaining - delta, 0.0)
 	if controls_locked:
 		_clear_control_input_state()
@@ -188,17 +234,36 @@ func _physics_process(delta: float) -> void:
 			apply_central_force(Vector2(move_direction * air_force, 0.0))
 		linear_velocity.x = move_toward(linear_velocity.x, 0.0, AIR_FRICTION)
 
-	if grapple_active:
-		var pull_direction: Vector2 = grapple_anchor - global_position
-		if pull_direction.length_squared() > 1.0:
-			var pull_normal: Vector2 = pull_direction.normalized()
-			var pull_speed: float = linear_velocity.dot(pull_normal)
-			grapple_length = maxf(global_position.distance_to(grapple_anchor), GRAPPLE_MIN_LENGTH)
-			if pull_speed < GRAPPLE_PULL_SPEED_LIMIT:
-				apply_central_force(pull_normal * GRAPPLE_PULL_FORCE)
+	_apply_grapple_pull(delta)
 
 	_update_camera(delta)
 	_update_jab(delta)
+
+func _apply_grapple_pull(delta: float) -> void:
+	if not grapple_active:
+		return
+	var pull_direction := grapple_anchor - global_position
+	if grapple_targets_orb:
+		# Include this tick's travel so fast passes cannot skip the release zone.
+		var closest := Geometry2D.get_closest_point_to_segment(grapple_anchor, global_position, global_position + linear_velocity * delta)
+		if closest.distance_to(grapple_anchor) <= orb_grapple_release_distance:
+			_release_grapple()
+			return
+	if pull_direction.length_squared() <= 1.0:
+		return
+	var pull_normal := pull_direction.normalized()
+	var pull_speed := linear_velocity.dot(pull_normal)
+	grapple_length = maxf(pull_direction.length(), GRAPPLE_MIN_LENGTH)
+	var pull_force := GRAPPLE_PULL_FORCE
+	var speed_limit := GRAPPLE_PULL_SPEED_LIMIT
+	if grapple_targets_orb:
+		# Remove sideways drift smoothly, preserving forward momentum on release.
+		var sideways_velocity := linear_velocity - pull_normal * pull_speed
+		linear_velocity -= sideways_velocity * (1.0 - exp(-orb_grapple_steering * delta))
+		pull_force = orb_grapple_pull_force
+		speed_limit = orb_grapple_speed_limit
+	if pull_speed < speed_limit:
+		apply_central_force(pull_normal * pull_force)
 
 func set_controls_locked(locked: bool) -> void:
 	controls_locked = locked
@@ -482,8 +547,7 @@ func _can_start_jab_charge() -> bool:
 	return not jab_charging and jab_cooldown_remaining <= 0.0 and jab_active_remaining <= 0.0
 
 func _start_jab_charge() -> void:
-	grapple_active = false
-	grapple_line.visible = false
+	_release_grapple()
 	jab_charging = true
 	jab_charge_time = 0.0
 	jab_charge_ratio = 0.0
@@ -672,32 +736,139 @@ func _update_grapple(is_grapple_pressed: bool) -> void:
 
 	was_grapple_pressed = is_grapple_pressed
 
-	if not is_grapple_pressed or not grapple_active:
+func _update_grapple_visuals(delta: float) -> void:
+	if not is_visible_in_tree():
 		grapple_line.visible = false
+		grapple_effect.visible = false
+		grapple_retracting = false
 		return
-
+	if not grapple_active:
+		grapple_effect.visible = false
+		if grapple_retracting:
+			grapple_retract_time = minf(grapple_retract_time + delta, grapple_retract_duration)
+			var progress := grapple_retract_time / grapple_retract_duration
+			var tip := grapple_retract_origin.lerp(global_position, progress * progress)
+			grapple_line.set_point_position(0, global_position)
+			grapple_line.set_point_position(1, tip)
+			grapple_retracting = progress < 1.0
+		grapple_line.visible = grapple_retracting
+		return
+	grapple_visual_time = minf(grapple_visual_time + delta, grapple_visual_duration)
+	var progress := clampf(grapple_visual_time / grapple_visual_duration, 0.0, 1.0)
+	var extension := 1.0 - pow(1.0 - progress, 2.0)
+	var tip := grapple_launch_position.lerp(grapple_anchor, extension)
+	var direction := (grapple_anchor - global_position).normalized()
 	grapple_line.visible = true
 	grapple_line.set_point_position(0, global_position)
-	grapple_line.set_point_position(1, grapple_anchor)
+	grapple_line.set_point_position(1, tip)
+	grapple_effect.update_visual(tip, direction, grapple_contact_normal, progress >= 1.0, grapple_hits_terrain, delta)
 
-func _try_start_grapple() -> bool:
+func _update_grapple_aim(delta: float) -> void:
+	var mouse_screen_position := get_viewport().get_mouse_position()
+	if not grapple_aim_initialized or controls_locked:
+		grapple_aim_screen_position = mouse_screen_position
+		grapple_aim_initialized = true
+	else:
+		# Only mouse motion is eased. Player/camera movement affects the ray
+		# immediately through its origin and the current canvas transform.
+		grapple_aim_screen_position = grapple_aim_screen_position.lerp(mouse_screen_position, 1.0 - exp(-GRAPPLE_AIM_RESPONSE * delta))
+
+func _find_grapple_target() -> Dictionary:
 	var origin: Vector2 = global_position
 	var mouse_position: Vector2 = get_global_mouse_position()
+	if grapple_aim_initialized:
+		mouse_position = get_canvas_transform().affine_inverse() * grapple_aim_screen_position
 	var ray_direction: Vector2 = mouse_position - origin
 	if ray_direction.length_squared() < 1.0:
-		return false
+		return {}
 
 	var ray_end: Vector2 = origin + ray_direction.normalized() * GRAPPLE_MAX_DISTANCE
 	var query: PhysicsRayQueryParameters2D = PhysicsRayQueryParameters2D.create(origin, ray_end)
 	query.exclude = [self]
-	var result: Dictionary = get_world_2d().direct_space_state.intersect_ray(query)
+	# Terrain uses layer 1; pass-through grapple orbs use layer 2.
+	query.collision_mask = 3
+	query.collide_with_areas = true
+	var space := get_world_2d().direct_space_state
+	var result := space.intersect_ray(query)
+	var collider := result.get("collider") as Node
+	if is_instance_valid(collider) and collider.has_method("get_grapple_anchor_position"):
+		var anchor: Vector2 = collider.get_grapple_anchor_position()
+		# The larger aim area selects the orb, but the rope attaches to its center.
+		# Check the center separately so the aim halo cannot reach through walls
+		# or extend the maximum grapple distance.
+		var sight_query := PhysicsRayQueryParameters2D.create(origin, anchor, 1, [get_rid()])
+		if origin.distance_to(anchor) > GRAPPLE_MAX_DISTANCE or not space.intersect_ray(sight_query).is_empty():
+			query.collide_with_areas = false
+			return space.intersect_ray(query)
+		result["position"] = anchor
+	return result
+
+func _refresh_grapple_target() -> void:
+	grapple_target_available = false
+	if controls_locked:
+		_set_highlighted_grapple_target(null)
+		return
+	if grapple_active:
+		return
+	var result := _find_grapple_target()
+	_set_highlighted_grapple_target(result.get("collider") as Node)
+	if not result.is_empty():
+		grapple_target_available = true
+		grapple_target_position = result["position"] as Vector2
+
+func _set_highlighted_grapple_target(target: Node) -> void:
+	if is_instance_valid(highlighted_grapple_target) and highlighted_grapple_target == target:
+		return
+	if is_instance_valid(highlighted_grapple_target) and highlighted_grapple_target.has_method("set_grapple_targeted"):
+		highlighted_grapple_target.set_grapple_targeted(self, false)
+	highlighted_grapple_target = target
+	if is_instance_valid(target) and target.has_method("set_grapple_targeted"):
+		target.set_grapple_targeted(self, true)
+
+func _update_grapple_cursor() -> void:
+	if grapple_cursor == null:
+		return
+	var target := grapple_anchor if grapple_active else grapple_target_position
+	var orb_selected := is_instance_valid(highlighted_grapple_target) and highlighted_grapple_target.has_method("get_grapple_ring_radius")
+	if orb_selected:
+		target = highlighted_grapple_target.get_grapple_anchor_position()
+		grapple_cursor.ring_radius = highlighted_grapple_target.get_grapple_ring_radius() * get_canvas_transform().x.length()
+		grapple_cursor.attached_scale = 0.9
+	else:
+		grapple_cursor.ring_radius = 21.0
+		grapple_cursor.attached_scale = grapple_cursor.ATTACHED_SCALE
+	grapple_cursor.show_glow = not orb_selected
+	var available := (show_grapple_cursor or orb_selected) and (grapple_active or grapple_target_available) and not controls_locked and is_visible_in_tree()
+	grapple_cursor.set_target(get_canvas_transform() * target, available, grapple_active)
+
+func _try_start_grapple() -> bool:
+	var result := _find_grapple_target()
 	if result.is_empty():
 		return false
 
+	_set_highlighted_grapple_target(result.get("collider") as Node)
 	grapple_anchor = result["position"] as Vector2
-	grapple_length = maxf(origin.distance_to(grapple_anchor), GRAPPLE_MIN_LENGTH)
+	grapple_length = maxf(global_position.distance_to(grapple_anchor), GRAPPLE_MIN_LENGTH)
+	grapple_launch_position = global_position
+	grapple_retracting = false
+	grapple_visual_time = 0.0
+	grapple_visual_duration = clampf(grapple_length / GRAPPLE_VISUAL_SHOOT_SPEED, 0.08, 0.22)
+	grapple_contact_normal = result.get("normal", Vector2.UP) as Vector2
+	grapple_hits_terrain = not highlighted_grapple_target.has_method("get_grapple_anchor_position")
+	grapple_targets_orb = highlighted_grapple_target.is_in_group("grapple_orbs")
+	grapple_effect.reset()
 	return true
 
 func _release_grapple() -> void:
+	if grapple_active and grapple_line.visible:
+		# Start at the currently drawn tip, including when released mid-flight.
+		grapple_retract_origin = grapple_line.get_point_position(1)
+		grapple_retract_time = 0.0
+		grapple_retract_duration = clampf(global_position.distance_to(grapple_retract_origin) / GRAPPLE_VISUAL_SHOOT_SPEED, 0.08, 0.2)
+		grapple_retracting = true
 	grapple_active = false
-	grapple_line.visible = false
+	grapple_targets_orb = false
+	grapple_line.visible = grapple_retracting
+	if grapple_effect != null:
+		grapple_effect.reset()
+	_set_highlighted_grapple_target(null)

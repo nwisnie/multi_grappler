@@ -3,7 +3,7 @@ class_name LevelSketch
 extends Node2D
 
 const GENERATED_LEVEL_NAME := "GeneratedLevel"
-const LevelSketchVisualScript := preload("res://scripts/level_sketch_visual.gd")
+const LevelSketchVisualScript := preload("res://scripts/editor/level_sketch_visual.gd")
 const END_CAP_SEGMENTS := 24
 const VISUAL_OUTLINE_EXTRA_WIDTH := 12.0
 const VISUAL_CENTERLINE_WIDTH := 4.0

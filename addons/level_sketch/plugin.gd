@@ -1,7 +1,7 @@
 @tool
 extends EditorPlugin
 
-const LevelSketchScript := preload("res://scripts/level_sketch.gd")
+const LevelSketchScript := preload("res://scripts/editor/level_sketch.gd")
 const ICON := preload("res://icon.svg")
 
 var sketch: LevelSketch
