@@ -19,7 +19,26 @@ func capture(name: String) -> void:
 func _run() -> void:
 	var shell = load("res://scenes/game_shell.tscn").instantiate()
 	root.add_child(shell)
+	await capture("title")
+	shell.show_join_menu()
+	await process_frame
+	await process_frame
+	await capture("join")
+	shell.join_dialog.hide()
+	shell.show_host_menu()
+	await process_frame
+	await process_frame
+	await capture("host")
+	shell.host_dialog.hide()
+	shell.show_demo()
 	await capture("demo")
+	shell.pause_game()
+	await capture("pause")
+	shell.show_settings()
+	await process_frame
+	await process_frame
+	await capture("settings")
+	shell.resume_game()
 	shell.show_editor()
 	await process_frame
 	await process_frame
@@ -49,6 +68,11 @@ func _run() -> void:
 	shell.playtest(document.copy())
 	await create_timer(0.5).timeout
 	await capture("playtest")
+	shell.pause_game()
+	await process_frame
+	await process_frame
+	await capture("playtest-pause")
+	shell.resume_game()
 	shell.show_editor()
 	await capture("return")
 	shell.free()

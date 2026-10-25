@@ -194,7 +194,9 @@ func _game_checks(playable: LevelDocument) -> void:
 	var shell = load("res://scenes/game_shell.tscn").instantiate()
 	root.add_child(shell)
 	await process_frame
-	check(shell.world != null and shell.editor_button.text == "Level Editor", "demo remains available with editor entry")
+	check(shell.world == null and shell.title_screen.visible, "game starts on title screen")
+	shell.show_demo()
+	check(shell.world != null and not shell.title_screen.visible, "tutorial opens demo")
 	shell.show_editor()
 	await process_frame
 	await process_frame

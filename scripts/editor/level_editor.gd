@@ -4,6 +4,7 @@ extends Node2D
 signal exit_requested
 signal playtest_requested(document: LevelDocument)
 
+const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
 const ToolbarButtonScript := preload("res://scripts/editor/editor_toolbar_button.gd")
 
 enum Tool { SELECT, LINE, CURVE, SPAWN, ORB, ERASE }
@@ -139,41 +140,6 @@ func _style_menu(panel: MenuPanel, divider_at_top: bool) -> void:
 	panel.at_top = divider_at_top
 	panel.resized.connect(panel.queue_redraw)
 
-func _style_dialog(dialog: ConfirmationDialog) -> void:
-	var theme := preload("res://assets/themes/game_theme.tres")
-	dialog.theme = theme
-	# Godot 4.3 caches embedded title-bar items separately from dialog contents.
-	# A zero-size icon removes both the title-bar X and its clickable area.
-	var empty_icon := ImageTexture.new()
-	for icon in ["close", "close_pressed"]:
-		dialog.add_theme_icon_override(icon, empty_icon)
-	dialog.add_theme_constant_override("close_h_offset", 0)
-	dialog.add_theme_constant_override("close_v_offset", 0)
-	for style in ["embedded_border", "embedded_unfocused_border"]:
-		dialog.add_theme_stylebox_override(style, theme.get_stylebox(style, "Window"))
-
-func _style_dialog_panel(dialog: ConfirmationDialog) -> void:
-	var panel := dialog.theme.get_stylebox("panel", "AcceptDialog").duplicate() as StyleBoxFlat
-	panel.corner_radius_top_left = 10
-	panel.corner_radius_top_right = 10
-	panel.corner_radius_bottom_left = 10
-	panel.corner_radius_bottom_right = 10
-	dialog.add_theme_stylebox_override("panel", panel)
-	dialog.transparent_bg = true
-	for key in ["embedded_border", "embedded_unfocused_border"]:
-		var border := dialog.theme.get_stylebox(key, "Window").duplicate() as StyleBoxFlat
-		border.corner_radius_bottom_left = 12
-		border.corner_radius_bottom_right = 12
-		border.border_width_left = 2
-		border.border_width_right = 2
-		border.border_width_bottom = 2
-		border.expand_margin_left = 2.0
-		border.expand_margin_right = 2.0
-		border.expand_margin_bottom = 2.0
-		border.border_color = Color("4c7187")
-		border.bg_color = border.border_color
-		dialog.add_theme_stylebox_override(key, border)
-
 func _build_ui() -> void:
 	background_layer = CanvasLayer.new()
 	background_layer.layer = -10
@@ -208,7 +174,7 @@ func _build_ui() -> void:
 	show_level.tooltip_text = "Zoom and center the camera to show the entire level (F)."
 	actions.add_child(_strip([
 		_button("Playtest", _request_playtest),
-		_button("Back to game", func() -> void: exit_requested.emit()),
+		_button("Main menu", func() -> void: exit_requested.emit()),
 		show_level,
 	]))
 	undo_button = _button("Undo", undo)
@@ -281,8 +247,7 @@ func _build_ui() -> void:
 	footer.add_child(help)
 	_build_code_dialog()
 	clear_dialog = ConfirmationDialog.new()
-	_style_dialog(clear_dialog)
-	_style_dialog_panel(clear_dialog)
+	DialogStyle.apply(clear_dialog)
 	clear_dialog.title = "Clear this level?"
 	clear_dialog.dialog_text = "Remove all terrain, orbs, and the spawn? You can undo this."
 	clear_dialog.confirmed.connect(clear_level)
@@ -293,8 +258,7 @@ func _build_ui() -> void:
 
 func _build_code_dialog() -> void:
 	code_dialog = ConfirmationDialog.new()
-	_style_dialog(code_dialog)
-	_style_dialog_panel(code_dialog)
+	DialogStyle.apply(code_dialog)
 	code_dialog.title = "Level code"
 	code_dialog.min_size = Vector2i(560, 340)
 	ui.add_child(code_dialog)
@@ -334,6 +298,7 @@ func _build_code_dialog() -> void:
 	column.add_child(code_error)
 	copy_button = code_dialog.add_button("Copy code", false, "copy")
 	copy_button.theme_type_variation = &"PrimaryButton"
+	DialogStyle.ButtonPulse.install(copy_button)
 	for button in [copy_button, code_dialog.get_ok_button(), code_dialog.get_cancel_button()]:
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	code_dialog.custom_action.connect(func(_action: StringName) -> void:

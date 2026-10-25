@@ -53,8 +53,10 @@ func _state_name(mode: int) -> String:
 		DRAW_DISABLED: return "disabled"
 	return "normal"
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var mode := get_draw_mode()
+	if not disabled and (is_hovered() or has_focus() or button_pressed):
+		_face.queue_redraw()
 	if mode == _draw_mode:
 		return
 	_draw_mode = mode
@@ -109,5 +111,7 @@ func _has_point(point: Vector2) -> bool:
 	return Geometry2D.is_point_in_polygon(point, _polygon(0.0))
 
 func draw_face(canvas: Control) -> void:
-	canvas.draw_colored_polygon(_polygon(0.0), _border)
-	canvas.draw_colored_polygon(_polygon(1.3), _background)
+	var selected := not disabled and (is_hovered() or has_focus() or button_pressed)
+	var amount := 0.12 if selected else 0.0
+	canvas.draw_colored_polygon(_polygon(0.0), _border.lightened(amount * 0.8))
+	canvas.draw_colored_polygon(_polygon(1.3), _background.lightened(amount))

@@ -104,8 +104,8 @@ try {
     if (attempt === 119) throw new Error('Web build did not finish loading');
   }
   await pause(800);
-  await screenshot('web-demo');
-  await click(1190, 32);
+  await screenshot('web-title');
+  await click(640, 394); // Level Editor on the title screen.
   await screenshot('web-editor-empty');
   for (let step = 0; step < 8; step++) {
     await page('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1100, y: 400, button: 'right', buttons: 2, clickCount: 1 });
@@ -184,11 +184,15 @@ try {
   await click(186, 37); // Playtest.
   await pause(700);
   await screenshot('web-playtest');
-  await click(1190, 32); // Back to editor.
+  await shortcut('Escape', 'Escape', 27);
+  await screenshot('web-pause');
+  await click(640, 410); // Back to Level Editor in pause menu.
   await screenshot('web-editor-return');
   await click(186, 37);
-  await click(1090, 32); // Restart.
-  await click(1190, 32);
+  await shortcut('Escape', 'Escape', 27);
+  await click(640, 466); // Restart Level in pause menu.
+  await shortcut('Escape', 'Escape', 27);
+  await click(640, 410); // Back to Level Editor.
   await screenshot('web-editor-return-second');
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('WEB SMOKE: drawing, clipboard, import/export, zoom, playtest, restart, and editor return completed without runtime errors');

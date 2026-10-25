@@ -2,5 +2,5 @@
 
 [ext_resource type="Script" path="res://scripts/ui/game_shell.gd" id="1"]
 
-[node name="MultiGrappler" type="Node"]
+[node name="SpeedBalls" type="Node"]
 script = ExtResource("1")
