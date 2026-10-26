@@ -61,15 +61,20 @@ func _run() -> void:
 	for invalid in ["", "1234567", "123456789", "abcdefgh", "+1234567", "1234 678"]:
 		check(not shell.valid_room_code(invalid), "Reject malformed room code: " + invalid)
 	shell.room_code.text = "00123456"
+	var previous_url = ProjectSettings.get_setting("network/signaling_url")
+	ProjectSettings.set_setting("network/signaling_url", "invalid-url")
 	shell._submit_join()
+	ProjectSettings.set_setting("network/signaling_url", previous_url)
 	check(shell.pending_room_code == "00123456", "Room code preserves leading zeroes")
-	check(shell.world == null and shell.join_message.text.contains("not available"), "Join does not simulate an unimplemented connection")
+	check(shell.world == null and shell.join_message.text.contains("ws://"), "Invalid signaling URLs report an actionable error")
 	shell.join_dialog.hide()
 	shell.join_dialog.canceled.emit()
 	check(not shell.dimmer.visible, "Closing title popup removes dimmer")
 	shell.title_screen.host_button.pressed.emit()
 	check(shell.host_dialog.visible and shell.host_player_limit.value == 4, "Host has initial setup form")
-	check(shell.host_dialog.get_ok_button().disabled, "Room creation is clearly unavailable")
+	check(not shell.host_dialog.get_ok_button().disabled, "Room creation is enabled")
+	shell._submit_host()
+	check(shell.host_message.text.contains("MG1-"), "Hosting requires a valid editor level code")
 	shell.host_dialog.hide()
 	shell.title_screen.tutorial_button.pressed.emit()
 	await physics_frame

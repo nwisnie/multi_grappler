@@ -29,6 +29,10 @@ enabled=PackedStringArray("res://addons/level_sketch/plugin.cfg")
 
 theme/custom="res://assets/themes/game_theme.tres"
 
+[network]
+
+signaling_url="ws://localhost:9080"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

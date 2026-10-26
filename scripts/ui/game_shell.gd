@@ -6,8 +6,12 @@ const EditorScene := preload("res://scenes/level_editor.tscn")
 const CustomScene := preload("res://scenes/custom_level.tscn")
 const TitleScene := preload("res://scenes/title_screen.tscn")
 const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
+const NetworkWorld := preload("res://scripts/network/network_world.gd")
+const SessionScript := preload("res://scripts/network/network_session.gd")
+const TitleMenuButton := preload("res://scripts/ui/title_menu_button.gd")
+const MenuTheme := preload("res://scripts/ui/menu_theme.gd")
 
-enum Screen { MAIN_MENU, TUTORIAL, EDITOR, PLAYTEST }
+enum Screen { MAIN_MENU, TUTORIAL, EDITOR, PLAYTEST, MULTIPLAYER }
 
 var screen: int = Screen.MAIN_MENU
 var world: Node
@@ -22,6 +26,17 @@ var pending_room_code := ""
 var host_dialog: ConfirmationDialog
 var host_name: LineEdit
 var host_player_limit: SpinBox
+var host_level_code: TextEdit
+var host_message: Label
+var session: SessionScript
+var room_card: Control
+var copy_room_button: Button
+var session_notice: ConfirmationDialog
+var loading_screen: ColorRect
+var loading_title: Label
+var loading_message: Label
+var loading_origin: ConfirmationDialog
+var loading_elapsed := 0.0
 var pause_dialog: ConfirmationDialog
 var resume_button: Button
 var pause_editor_button: Button
@@ -55,14 +70,130 @@ func _ready() -> void:
 	_build_host_menu()
 	_build_pause_menu()
 	_build_settings_menu()
+	session = SessionScript.new()
+	session.name = "NetworkSession"
+	add_child(session)
+	session.session_started.connect(_start_network_world)
+	session.session_ended.connect(_session_ended)
+	session.status_changed.connect(_network_status)
+	session.peer_arrived.connect(_network_peer_arrived)
+	session.peer_left.connect(_network_peer_left)
+	_build_room_card()
+	session_notice = ConfirmationDialog.new()
+	session_notice.title = "Multiplayer"
+	DialogStyle.apply(session_notice, true)
+	session_notice.get_cancel_button().hide()
+	menu_layer.add_child(session_notice)
+	_build_loading_screen()
 	show_main_menu()
+
+func _build_loading_screen() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 60
+	add_child(layer)
+	loading_screen = ColorRect.new()
+	loading_screen.name = "NetworkLoadingScreen"
+	loading_screen.color = Color("d7edff")
+	loading_screen.theme = MenuTheme.get_theme()
+	layer.add_child(loading_screen)
+	loading_screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var center := CenterContainer.new()
+	loading_screen.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var column := VBoxContainer.new()
+	column.custom_minimum_size.x = 400
+	column.add_theme_constant_override("separation", 20)
+	center.add_child(column)
+	loading_title = Label.new()
+	loading_title.text = "Loading..."
+	loading_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	loading_title.add_theme_font_size_override("font_size", 40)
+	loading_title.add_theme_color_override("font_color", Color.BLACK)
+	loading_title.add_theme_constant_override("outline_size", 0)
+	column.add_child(loading_title)
+	loading_message = _label("")
+	loading_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	loading_message.add_theme_color_override("font_color", Color.BLACK)
+	loading_message.add_theme_constant_override("outline_size", 0)
+	column.add_child(loading_message)
+	var cancel := TitleMenuButton.new()
+	cancel.text = "Cancel"
+	cancel.custom_minimum_size.y = 58
+	cancel.pressed.connect(show_main_menu)
+	column.add_child(cancel)
+	DialogStyle.ButtonPulse.install(cancel, false, true)
+	loading_screen.hide()
+
+func _show_network_loading(message: String, origin: ConfirmationDialog = null) -> void:
+	loading_origin = origin
+	loading_elapsed = 0.0
+	loading_message.text = message
+	join_dialog.hide()
+	host_dialog.hide()
+	dimmer.hide()
+	loading_screen.show()
+
+func _network_player_spawned(player: RigidBody2D) -> void:
+	_apply_player_settings(player)
+	player.spawn_controls_pending = false
+	player.set_controls_locked(true)
+	_finish_network_loading.call_deferred(player)
+
+func _finish_network_loading(player: RigidBody2D) -> void:
+	# Reveal gameplay after the local player's camera and UI have had a frame to settle.
+	await get_tree().process_frame
+	if screen != Screen.MULTIPLAYER or not is_instance_valid(player) or _player() != player:
+		return
+	loading_screen.hide()
+	loading_origin = null
+	resume_waiting_for_release = true
+
+func _build_room_card() -> void:
+	# Fixed viewport-relative bounds keep long connection messages out of the HUD.
+	room_card = Control.new()
+	room_card.name = "RoomCodeCard"
+	room_card.theme = MenuTheme.get_theme()
+	room_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu_layer.add_child(room_card)
+	room_card.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	room_card.offset_left = -160
+	room_card.offset_right = 160
+	room_card.offset_top = 12
+	room_card.offset_bottom = 106
+	var column := VBoxContainer.new()
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_theme_constant_override("separation", 4)
+	room_card.add_child(column)
+	column.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var caption := Label.new()
+	caption.text = "Join With This Code:"
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.add_theme_font_size_override("font_size", 18)
+	caption.add_theme_color_override("font_color", Color.BLACK)
+	caption.add_theme_constant_override("outline_size", 0)
+	column.add_child(caption)
+	copy_room_button = TitleMenuButton.new()
+	copy_room_button.name = "RoomCode"
+	copy_room_button.custom_minimum_size.y = 60
+	copy_room_button.add_theme_font_size_override("font_size", 32)
+	copy_room_button.add_theme_color_override("font_color", Color.BLACK)
+	copy_room_button.focus_mode = Control.FOCUS_NONE
+	copy_room_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	copy_room_button.tooltip_text = "Click to copy the room code"
+	copy_room_button.pressed.connect(func() -> void: DisplayServer.clipboard_set(copy_room_button.text))
+	column.add_child(copy_room_button)
+	DialogStyle.ButtonPulse.install(copy_room_button, false, true)
+	room_card.hide()
 
 func _exit_tree() -> void:
 	# Removing this shell must never leave a later scene paused.
 	if get_tree() != null:
 		get_tree().paused = false
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if loading_screen.visible:
+		loading_elapsed += delta
+		loading_title.text = "Loading" + ".".repeat(1 + int(loading_elapsed * 2.0) % 3)
 	if resume_waiting_for_release and not get_tree().paused:
 		if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not Input.is_key_pressed(KEY_SPACE):
 			resume_waiting_for_release = false
@@ -73,7 +204,10 @@ func _process(_delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE or event.keycode == KEY_P:
-			if settings_dialog.visible:
+			if loading_screen.visible:
+				if event.keycode == KEY_ESCAPE:
+					show_main_menu()
+			elif settings_dialog.visible:
 				_close_settings()
 			elif pause_dialog.visible:
 				resume_game()
@@ -136,7 +270,7 @@ func _build_join_menu() -> void:
 	join_dialog.ok_button_text = "Join"
 	join_dialog.dialog_hide_on_ok = false
 	join_dialog.confirmed.connect(_submit_join)
-	join_dialog.canceled.connect(func() -> void: dimmer.hide())
+	join_dialog.canceled.connect(_cancel_connection)
 	var column := _column(join_dialog)
 	column.add_child(_label("Enter the 8-digit room code from your host."))
 	room_code = LineEdit.new()
@@ -163,14 +297,16 @@ static func valid_room_code(text: String) -> bool:
 func _validate_room_code(text: String) -> void:
 	var valid := valid_room_code(text)
 	join_dialog.get_ok_button().disabled = not valid
-	join_message.text = "Room joining is coming soon." if valid else "Use exactly 8 digits (0–9)."
+	join_message.text = "Ready to join." if valid else "Use exactly 8 digits (0-9)."
 
 func _submit_join() -> void:
 	_validate_room_code(room_code.text)
 	if not valid_room_code(room_code.text):
 		return
 	pending_room_code = room_code.text
-	join_message.text = "Room joining is not available yet. Code: " + pending_room_code
+	join_dialog.get_ok_button().disabled = true
+	_show_network_loading("Finding the host...", join_dialog)
+	session.join_game(SessionScript.default_url(), pending_room_code)
 
 func show_join_menu() -> void:
 	dimmer.show()
@@ -183,11 +319,12 @@ func show_join_menu() -> void:
 func _build_host_menu() -> void:
 	host_dialog = _dialog("Host Game", "Back")
 	host_dialog.ok_button_text = "Create room"
-	host_dialog.canceled.connect(func() -> void: dimmer.hide())
-	host_dialog.get_ok_button().disabled = true
-	host_dialog.get_ok_button().tooltip_text = "Room hosting is coming soon."
+	host_dialog.dialog_hide_on_ok = false
+	host_dialog.canceled.connect(_cancel_connection)
+	host_dialog.confirmed.connect(_submit_host)
 	var column := _column(host_dialog)
-	column.add_child(_label("Set up a custom game. Room creation and multiplayer will be added later."))
+	column.add_theme_constant_override("separation", 8)
+	column.add_child(_label("Paste a level code from the editor, then share your room's 8-digit code. Leaving ends the session for everyone."))
 	column.add_child(_label("Game name"))
 	host_name = LineEdit.new()
 	host_name.text = "My game"
@@ -200,10 +337,39 @@ func _build_host_menu() -> void:
 	host_player_limit.max_value = 8
 	host_player_limit.value = 4
 	column.add_child(host_player_limit)
-	column.add_child(_label("Level selection and game rules are coming soon."))
+	column.add_child(_label("Level code"))
+	host_level_code = TextEdit.new()
+	host_level_code.placeholder_text = "MG1-..."
+	host_level_code.custom_minimum_size = Vector2(380, 90)
+	host_level_code.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	column.add_child(host_level_code)
+	host_message = _label("")
+	column.add_child(host_message)
+
+func _submit_host() -> void:
+	var decoded := LevelCodec.decode_level(host_level_code.text)
+	if not decoded["error"].is_empty():
+		host_message.text = decoded["error"]
+		return
+	var document: LevelDocument = decoded["document"]
+	var error := document.playtest_error()
+	if not error.is_empty():
+		host_message.text = error
+		return
+	host_dialog.get_ok_button().disabled = true
+	_show_network_loading("Creating your room...", host_dialog)
+	session.host_game(SessionScript.default_url(), LevelCodec.encode_level(document), int(host_player_limit.value), host_name.text)
+
+func _cancel_connection() -> void:
+	session.close()
+	dimmer.hide()
+	host_dialog.get_ok_button().disabled = false
+	_validate_room_code(room_code.text)
 
 func show_host_menu() -> void:
 	dimmer.show()
+	host_message.text = ""
+	host_dialog.get_ok_button().disabled = false
 	_popup(host_dialog)
 	host_dialog.get_cancel_button().grab_focus.call_deferred()
 
@@ -267,18 +433,23 @@ func _apply_player_settings(player: RigidBody2D) -> void:
 	if is_instance_valid(player):
 		player.initial_camera_zoom = Vector2.ONE * camera_zoom
 		player.show_grapple_cursor = show_wall_cursor
+		if screen == Screen.MULTIPLAYER and (pause_dialog.visible or settings_dialog.visible):
+			player.spawn_controls_pending = false
+			player.set_controls_locked(true)
 
 func pause_game() -> void:
 	if not is_instance_valid(world):
 		return
 	var player := _player()
 	if player != null:
+		if screen == Screen.MULTIPLAYER:
+			player.spawn_controls_pending = false
 		player.set_controls_locked(true)
 	resume_waiting_for_release = false
-	get_tree().paused = true
+	get_tree().paused = screen != Screen.MULTIPLAYER
 	dimmer.show()
-	pause_editor_button.visible = world is CustomLevel
-	pause_restart_button.visible = world is CustomLevel
+	pause_editor_button.visible = screen == Screen.PLAYTEST
+	pause_restart_button.visible = screen == Screen.PLAYTEST
 	_popup(pause_dialog)
 
 func resume_game() -> void:
@@ -300,6 +471,8 @@ func _close_settings() -> void:
 		_popup(pause_dialog)
 
 func _clear_menus() -> void:
+	loading_screen.hide()
+	loading_origin = null
 	get_tree().paused = false
 	resume_waiting_for_release = false
 	for dialog in [pause_dialog, settings_dialog, join_dialog, host_dialog]:
@@ -313,6 +486,10 @@ func _dispose_world() -> void:
 	world = null
 
 func show_main_menu() -> void:
+	if is_instance_valid(session):
+		session.close()
+	if is_instance_valid(room_card):
+		room_card.hide()
 	_clear_menus()
 	if is_instance_valid(editor):
 		editor.suspend()
@@ -367,3 +544,61 @@ func _restart_playtest() -> void:
 	resume_game()
 	if world is CustomLevel:
 		world.restart()
+
+func _network_status(message: String) -> void:
+	join_message.text = message
+	host_message.text = message
+	if loading_screen.visible:
+		loading_message.text = message
+
+func _start_network_world(code: String, level_code: String, _hosting: bool) -> void:
+	var decoded := LevelCodec.decode_level(level_code)
+	if not decoded["error"].is_empty():
+		_session_ended("The host supplied an invalid level code: " + decoded["error"])
+		return
+	var custom := NetworkWorld.new()
+	custom.name = "NetworkWorld"
+	var error := custom.prepare(decoded["document"])
+	if not error.is_empty():
+		custom.free()
+		_session_ended("Could not load the host's level: " + error)
+		return
+	_clear_menus()
+	_show_network_loading("Loading the level and waiting for your player...")
+	title_screen.hide()
+	if is_instance_valid(editor):
+		editor.suspend()
+	_dispose_world()
+	screen = Screen.MULTIPLAYER
+	world = custom
+	custom.player_spawned.connect(_network_player_spawned)
+	add_child(custom)
+	copy_room_button.text = code
+	room_card.show()
+
+func _network_peer_arrived(peer_id: int) -> void:
+	if screen == Screen.MULTIPLAYER and session.hosting:
+		world.add_player(peer_id)
+
+func _network_peer_left(peer_id: int) -> void:
+	if screen == Screen.MULTIPLAYER and session.hosting:
+		world.remove_player(peer_id)
+
+func _session_ended(reason: String) -> void:
+	var origin := loading_origin
+	loading_screen.hide()
+	loading_origin = null
+	if session.active:
+		session.close()
+	if screen == Screen.MULTIPLAYER:
+		show_main_menu()
+		session_notice.dialog_text = reason
+		session_notice.popup_centered(Vector2i(480, 0))
+	else:
+		join_message.text = reason
+		host_message.text = reason
+		host_dialog.get_ok_button().disabled = false
+		join_dialog.get_ok_button().disabled = not valid_room_code(room_code.text)
+		if is_instance_valid(origin):
+			dimmer.show()
+			_popup(origin)

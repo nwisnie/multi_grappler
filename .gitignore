@@ -3,3 +3,5 @@
 /android/
 /build/*
 !/build/.gdignore
+server/node_modules/
+server/.env

@@ -29,6 +29,10 @@ func prepare(value: LevelDocument) -> String:
 func _ready() -> void:
 	if document == null:
 		return
+	_setup_environment()
+	restart()
+
+func _setup_environment() -> void:
 	var sky := SkyScript.new()
 	sky.texture = SkyTexture
 	sky.z_index = -4096
@@ -37,7 +41,6 @@ func _ready() -> void:
 		var orb := OrbScene.instantiate()
 		orb.position = LevelDocument.cell_position(point)
 		add_child(orb)
-	restart()
 
 func restart() -> void:
 	restart_pending = false

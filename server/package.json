@@ -1,0 +1,20 @@
+{
+  "name": "multi-grappler-signaling",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Room codes and WebRTC signaling for Speed Balls",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node signaling.js",
+    "test": "node --test signaling.test.js",
+    "test:browser": "node browser-smoke.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}
