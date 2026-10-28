@@ -2,7 +2,6 @@
 extends EditorPlugin
 
 const LevelSketchScript := preload("res://scripts/editor/level_sketch.gd")
-const ICON := preload("res://icon.svg")
 
 var sketch: LevelSketch
 var drawing := false
@@ -50,7 +49,8 @@ var last_canvas_point := Vector2.ZERO
 var has_last_canvas_point := false
 
 func _enter_tree() -> void:
-	add_custom_type("LevelSketch", "Node2D", LevelSketchScript, ICON)
+	var icon := get_editor_interface().get_base_control().get_theme_icon("Node2D", "EditorIcons")
+	add_custom_type("LevelSketch", "Node2D", LevelSketchScript, icon)
 	set_input_event_forwarding_always_enabled()
 	set_force_draw_over_forwarding_enabled()
 	_build_toolbar()

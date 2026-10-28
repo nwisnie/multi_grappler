@@ -39,6 +39,7 @@ func _process(_delta: float) -> void:
 	state["room_card_text"] = shell.copy_room_button.text
 	state["loading"] = shell.loading_screen.visible
 	state["loading_seen"] = loading_seen
+	state["background_polling"] = shell.session.background_timer >= 0
 	state["room_card_fits"] = get_viewport().get_visible_rect().encloses(shell.room_card.get_global_rect()) and shell.room_card.size.x <= 320
 	if is_instance_valid(shell.world) and shell.world.get("players") != null:
 		for ball in shell.world.players.get_children():

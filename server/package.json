@@ -4,7 +4,7 @@
   "private": true,
   "description": "Room codes and WebRTC signaling for Speed Balls",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12.0"
   },
   "scripts": {
     "start": "node signaling.js",

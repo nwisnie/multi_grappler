@@ -2,8 +2,24 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { once } = require("node:events");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { WebSocket } = require("ws");
-const { createSignalingServer, cloudflareIceServers } = require("./signaling");
+const { createSignalingServer, cloudflareIceServers, loadConfiguration } = require("./signaling");
+
+test("optional env files load settings and preserve deployed environment overrides", t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "multi-grappler-env-"));
+  const previous = { ...process.env };
+  t.after(() => { process.env = previous; fs.rmSync(directory, { recursive: true, force: true }); });
+  const file = path.join(directory, ".env");
+  fs.writeFileSync(file, 'MULTI_GRAPPLER_TEST_FILE="file-value"\nMULTI_GRAPPLER_TEST_OVERRIDE=file-value\n');
+  process.env.MULTI_GRAPPLER_TEST_OVERRIDE = "environment-value";
+  loadConfiguration(file);
+  assert.equal(process.env.MULTI_GRAPPLER_TEST_FILE, "file-value");
+  assert.equal(process.env.MULTI_GRAPPLER_TEST_OVERRIDE, "environment-value");
+  assert.doesNotThrow(() => loadConfiguration(path.join(directory, "missing.env")));
+});
 
 async function client(url) {
   const ws = new WebSocket(url);

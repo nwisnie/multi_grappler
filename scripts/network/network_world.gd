@@ -60,6 +60,8 @@ func remove_player(peer_id: int) -> void:
 		return
 	var ball := players.get_node_or_null(str(peer_id))
 	if ball != null:
+		# Tree exit despawns the replica even when hidden tabs defer frame cleanup.
+		players.remove_child(ball)
 		ball.queue_free()
 
 func _physics_process(_delta: float) -> void:

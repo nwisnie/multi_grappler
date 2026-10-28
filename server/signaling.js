@@ -1,8 +1,18 @@
 "use strict";
 
 const http = require("node:http");
+const path = require("node:path");
 const { randomInt } = require("node:crypto");
 const { WebSocketServer, WebSocket } = require("ws");
+
+function loadConfiguration(envPath = path.join(__dirname, ".env")) {
+  try {
+    // Explicit environment variables take precedence over local file settings.
+    process.loadEnvFile(envPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
 
 // No level execution and no gameplay packets on this service.
 function createSignalingServer(options = {}) {
@@ -167,10 +177,11 @@ async function cloudflareIceServers() {
 }
 
 if (require.main === module) {
+  loadConfiguration();
   const app = createSignalingServer();
   const port = Number(process.env.PORT || 9080);
   app.server.listen(port, process.env.HOST || "0.0.0.0", () => console.log(`Room service listening on ${port}`));
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, async () => { await app.close(); process.exit(0); });
 }
 
-module.exports = { createSignalingServer, cloudflareIceServers };
+module.exports = { createSignalingServer, cloudflareIceServers, loadConfiguration };

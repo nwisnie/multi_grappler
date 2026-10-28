@@ -23,6 +23,9 @@ var request: Dictionary = {}
 var elapsed := 0.0
 var request_sent := false
 var joined_game := false
+var started_at_msec := 0
+var background_callback: JavaScriptObject
+var background_timer := -1
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -62,10 +65,31 @@ func _begin(url: String, message: Dictionary, as_host: bool) -> void:
 		_fail("Could not connect to the signaling server (%s)." % error_string(error))
 		return
 	active = true
+	started_at_msec = Time.get_ticks_msec()
+	_start_background_poll()
 	status_changed.emit("Connecting to room service...")
+
+func _start_background_poll() -> void:
+	if not OS.has_feature("web"):
+		return
+	if background_callback == null:
+		background_callback = JavaScriptBridge.create_callback(_background_tick)
+	# Hidden browser tabs can stop animation frames altogether. Keep just the
+	# networking alive on a timer; visible tabs retain Godot's normal frame loop.
+	background_timer = int(JavaScriptBridge.get_interface("window").setInterval(background_callback, 250))
+
+func _background_tick(_arguments: Array) -> void:
+	if not active or not is_inside_tree() or not JavaScriptBridge.get_interface("document").hidden:
+		return
+	_poll_network()
+	if active:
+		multiplayer.poll()
 
 func close() -> void:
 	active = false
+	if background_timer >= 0:
+		JavaScriptBridge.get_interface("window").clearInterval(background_timer)
+		background_timer = -1
 	if socket != null:
 		socket.close()
 	socket = null
@@ -84,11 +108,15 @@ func close() -> void:
 
 func _exit_tree() -> void:
 	close()
+	background_callback = null
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
+	_poll_network()
+
+func _poll_network() -> void:
 	if not active or socket == null:
 		return
-	elapsed += delta
+	elapsed = float(Time.get_ticks_msec() - started_at_msec) / 1000.0
 	socket.poll()
 	var state := socket.get_ready_state()
 	if state == WebSocketPeer.STATE_CLOSED:
@@ -105,7 +133,10 @@ func _process(delta: float) -> void:
 	if not active:
 		return
 	if (room.is_empty() or (not hosting and not joined_game)) and elapsed > CONNECT_TIMEOUT:
-		_fail("Connection timed out. Check the server URL and WebRTC/TURN configuration, then try again.")
+		if room.is_empty():
+			_fail("The room service did not respond. Check that it is running, then try again.")
+		else:
+			_fail("Room found, but the host connection timed out. Keep the host browser running and try again. For internet play, check the TURN configuration.")
 		return
 	for peer_id in deadlines.keys():
 		if elapsed > float(deadlines[peer_id]):

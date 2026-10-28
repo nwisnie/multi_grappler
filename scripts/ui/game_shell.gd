@@ -1,7 +1,7 @@
 extends Node
 ## Owns navigation and preserves the editor draft across menus and playtests.
 
-const DemoScene := preload("res://base_level.tscn")
+const DemoScene := preload("res://scenes/base_level.tscn")
 const EditorScene := preload("res://scenes/level_editor.tscn")
 const CustomScene := preload("res://scenes/custom_level.tscn")
 const TitleScene := preload("res://scenes/title_screen.tscn")

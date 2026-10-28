@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix="multi-grappler-browser-") as directory:
     staging = Path(directory)
     for name in ("assets", "scripts", "scenes", "tests", "addons"):
         shutil.copytree(repo / name, staging / name)
-    for name in ("base_level.tscn", "icon.svg", "icon.svg.import", "project.godot", "export_presets.cfg"):
+    for name in ("project.godot", "export_presets.cfg"):
         shutil.copy2(repo / name, staging / name)
     # Reuse asset imports when available, so the editor can load the theme at startup.
     if (repo / ".godot" / "imported").is_dir():
