@@ -20,3 +20,14 @@ A Godot 4.3 browser game with a level editor and WebRTC multiplayer for 2–8 pl
 
 3. Visit `http://localhost:8000` in two browser tabs.
 
+## Public multiplayer on Cloudflare
+
+The production signaling backend uses Workers and one SQLite-backed Durable Object per lobby.
+Anyone can host a lobby; players do not need Cloudflare accounts. Gameplay still uses Godot's
+WebRTC multiplayer and `MultiplayerSynchronizer`. GitHub Pages continues serving the game.
+
+Follow [the Cloudflare setup guide](server/cloudflare/README.md) to install, test, add TURN
+secrets, and deploy `rooms.wizkinews.com`. The browser game selects that service automatically
+on `wizkinews.com` and `www.wizkinews.com`; localhost keeps using `ws://localhost:9080`.
+You must re-export and upload the game after updating the code.
+

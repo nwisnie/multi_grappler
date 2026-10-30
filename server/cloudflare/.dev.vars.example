@@ -1,0 +1,5 @@
+# Optional local TURN credentials. Copy this file to .dev.vars to enable TURN.
+# Production values are set with `npx wrangler secret put`, not this file.
+# An empty configuration uses STUN only for local testing.
+CLOUDFLARE_TURN_KEY_ID=
+CLOUDFLARE_TURN_API_TOKEN=

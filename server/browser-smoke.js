@@ -17,12 +17,13 @@ const { createSignalingServer } = require("./signaling");
     res.writeHead(200, { "Content-Type": types[path.extname(file)] || "application/octet-stream" });
     fs.createReadStream(file).pipe(res);
   });
-  const signaling = createSignalingServer({ getIceServers: async () => [] });
+  // An external local Worker lets the same real-browser assertions cover both backends.
+  const signaling = process.env.BROWSER_SIGNALING_URL ? null : createSignalingServer({ getIceServers: async () => [] });
   let browser;
   const sameWindowTabs = process.env.BROWSER_TABS === "1";
   try {
-    await new Promise(resolve => signaling.server.listen(9080, "127.0.0.1", resolve));
-    await new Promise(resolve => files.listen(0, "127.0.0.1", resolve));
+    if (signaling) await new Promise(resolve => signaling.server.listen(9080, "127.0.0.1", resolve));
+    await new Promise(resolve => files.listen(Number(process.env.BROWSER_HTTP_PORT || 0), "127.0.0.1", resolve));
     browser = await chromium.launch({
       headless: !sameWindowTabs,
       executablePath: process.env.CHROME_PATH || undefined,
@@ -73,6 +74,7 @@ const { createSignalingServer } = require("./signaling");
         await tabContext.pages()[0].evaluate(() => { window.open("about:blank", "_blank"); });
         tab = await opened;
       } else tab = tabContext ? await tabContext.newPage() : await browser.newPage({ viewport: { width: 1280, height: 720 } });
+      if (process.env.BROWSER_SIGNALING_URL) await tab.addInitScript(value => { window.MULTI_GRAPPLER_SIGNALING_URL = value; }, process.env.BROWSER_SIGNALING_URL);
       tab.on("console", msg => {
         if (msg.type() === "error" && !msg.text().includes("favicon")) errors.push(`${query}: ${msg.text()}`);
       });
@@ -189,12 +191,12 @@ const { createSignalingServer } = require("./signaling");
     await guest.waitForFunction(() => window.multiplayerState && window.multiplayerState.error.includes("host"), null, { timeout: 30000 });
     assert.equal(Object.keys((await state(guest)).players).length, 0);
     assert.equal((await state(guest)).background_polling, false);
-    assert.equal(signaling.rooms.size, 0);
+    if (signaling) assert.equal(signaling.rooms.size, 0);
     assert.deepEqual(errors, []);
     console.log("PASS: closing the host ends the session and destroys the room; no browser/Godot errors");
   } finally {
     if (browser) await browser.close();
-    await signaling.close();
+    if (signaling) await signaling.close();
     await new Promise(resolve => files.close(resolve));
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

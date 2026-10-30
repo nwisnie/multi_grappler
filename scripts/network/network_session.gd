@@ -10,6 +10,8 @@ signal peer_left(peer_id: int)
 
 const CONNECT_TIMEOUT := 25.0
 const DEFAULT_URL := "ws://localhost:9080"
+const PUBLIC_URL := "wss://rooms.wizkinews.com"
+const HEARTBEAT_MSEC := 15000
 
 var socket: WebSocketPeer
 var rtc: WebRTCMultiplayerPeer
@@ -26,6 +28,7 @@ var joined_game := false
 var started_at_msec := 0
 var background_callback: JavaScriptObject
 var background_timer := -1
+var next_heartbeat_msec := 0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -41,6 +44,11 @@ static func default_url() -> String:
 		var browser_url = JavaScriptBridge.eval("window.MULTI_GRAPPLER_SIGNALING_URL || ''")
 		if browser_url is String and not browser_url.is_empty():
 			return browser_url
+		# A public export works without editing the generated HTML. Local exports
+		# keep using the local service; an explicit HTML override always wins.
+		var hostname = JavaScriptBridge.eval("window.location.hostname")
+		if hostname == "wizkinews.com" or hostname == "www.wizkinews.com":
+			return PUBLIC_URL
 	return configured
 
 func host_game(url: String, level_code: String, limit: int, game_name: String) -> void:
@@ -60,12 +68,18 @@ func _begin(url: String, message: Dictionary, as_host: bool) -> void:
 	hosting = as_host
 	request = message
 	socket = WebSocketPeer.new()
-	var error := socket.connect_to_url(url)
+	# Workers route each room to its own Durable Object before the upgrade.
+	# The local Node server accepts this path too.
+	var connect_url := url.trim_suffix("/")
+	if not as_host:
+		connect_url += "/rooms/" + str(message.get("room", ""))
+	var error := socket.connect_to_url(connect_url)
 	if error != OK:
 		_fail("Could not connect to the signaling server (%s)." % error_string(error))
 		return
 	active = true
 	started_at_msec = Time.get_ticks_msec()
+	next_heartbeat_msec = started_at_msec
 	_start_background_poll()
 	status_changed.emit("Connecting to room service...")
 
@@ -120,12 +134,22 @@ func _poll_network() -> void:
 	socket.poll()
 	var state := socket.get_ready_state()
 	if state == WebSocketPeer.STATE_CLOSED:
-		_fail("Room service disconnected. The session has ended.")
+		# Cloudflare may send an error and a close in the same poll.
+		while active and socket != null and socket.get_available_packet_count() > 0:
+			var message = JSON.parse_string(socket.get_packet().get_string_from_utf8())
+			if message is Dictionary:
+				_handle_message(message)
+		if active:
+			_fail("Room service disconnected. The session has ended.")
 		return
 	if state == WebSocketPeer.STATE_OPEN:
 		if not request_sent:
 			request_sent = true
 			_send(request)
+		if Time.get_ticks_msec() >= next_heartbeat_msec:
+			# Exact bytes match Cloudflare's hibernation auto-response. No room wakeup.
+			socket.send_text('{"type":"ping"}')
+			next_heartbeat_msec = Time.get_ticks_msec() + HEARTBEAT_MSEC
 		while active and socket != null and socket.get_available_packet_count() > 0:
 			var message = JSON.parse_string(socket.get_packet().get_string_from_utf8())
 			if message is Dictionary:

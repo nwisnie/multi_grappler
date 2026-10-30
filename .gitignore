@@ -5,3 +5,10 @@
 !/build/.gdignore
 server/node_modules/
 server/.env
+server/cloudflare/node_modules/
+server/cloudflare/.wrangler/
+server/cloudflare/.dev.vars
+server/cloudflare/.dev.vars.*
+!server/cloudflare/.dev.vars.example
+server/cloudflare/.env
+server/cloudflare/.env.*

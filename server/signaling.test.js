@@ -54,6 +54,8 @@ test("room codes, capacity, signaling isolation, guest departure, and host teard
   wrong.sendJSON({ type: "join", room: "00000000" });
   assert.match((await wrong.next("error")).message, /not found/);
   const guest = await client(url);
+  guest.sendJSON({ type: "ping" });
+  await guest.next("pong");
   guest.sendJSON({ type: "join", room: created.room });
   const joined = await guest.next("joined");
   assert.equal(joined.level_code, "MG1-AAAA");

@@ -68,6 +68,7 @@ function createSignalingServer(options = {}) {
       let message;
       try { message = JSON.parse(raw.toString()); } catch { return error(ws, "Invalid JSON."); }
       if (binary || !message || typeof message !== "object" || Array.isArray(message)) return error(ws, "Invalid message.");
+      if (message.type === "ping") return send(ws, { type: "pong" });
       if (message.type === "create" || message.type === "join") {
         if (ws.room || ws.busy) return error(ws, "Already joining a room.");
         ws.busy = true;
