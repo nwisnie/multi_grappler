@@ -4,6 +4,8 @@ signal tutorial_requested
 signal editor_requested
 signal join_requested
 signal host_requested
+signal settings_requested
+signal fullscreen_requested
 
 const SKY := preload("res://assets/images/levels/bg_sky.png")
 const BALL := preload("res://assets/images/characters/player_ball/main_ball.png")
@@ -18,6 +20,8 @@ var tutorial_button: Button
 var editor_button: Button
 var join_button: Button
 var host_button: Button
+var settings_button: Button
+var fullscreen_button: Button
 var wave_items: Array[Control] = []
 var wave_time := 0.0
 
@@ -78,7 +82,7 @@ func _ready() -> void:
 		letter.add_theme_constant_override("outline_size", 0)
 		slot.add_child(letter)
 		wave_items.append(letter)
-	# No enclosing panel: the four options sit directly on the sky background.
+	# No enclosing panel: the options sit directly on the sky background.
 	var actions := VBoxContainer.new()
 	actions.add_theme_constant_override("separation", 12)
 	column.add_child(actions)
@@ -86,7 +90,9 @@ func _ready() -> void:
 	editor_button = _button("Level Editor", func() -> void: editor_requested.emit())
 	join_button = _button("Join Game", func() -> void: join_requested.emit())
 	host_button = _button("Host Game", func() -> void: host_requested.emit())
-	for button in [tutorial_button, editor_button, join_button, host_button]:
+	settings_button = _button("Settings", func() -> void: settings_requested.emit())
+	fullscreen_button = _button("Fullscreen", func() -> void: fullscreen_requested.emit())
+	for button in [tutorial_button, editor_button, join_button, host_button, settings_button, fullscreen_button]:
 		actions.add_child(button)
 	tutorial_button.grab_focus.call_deferred()
 	_update_wave()

@@ -6,16 +6,18 @@ signal playtest_requested(document: LevelDocument)
 
 const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
 const ToolbarButtonScript := preload("res://scripts/editor/editor_toolbar_button.gd")
+const RaceCheckpoint := preload("res://scripts/levels/race_checkpoint.gd")
 
-enum Tool { SELECT, LINE, CURVE, SPAWN, ORB, ERASE }
-const TOOL_NAMES := ["Select / move", "Line", "Curve", "Spawn", "Grapple orb", "Erase"]
+enum Tool { SELECT, LINE, CURVE, SPAWN, ORB, CHECKPOINT, ERASE }
+const TOOL_NAMES := ["Select / move", "Line", "Curve", "Spawn", "Grapple orb", "Race checkpoint", "Erase"]
 const INSTRUCTIONS := [
 	"Drag endpoints to move a shared joint; drag the curve's diamond to reshape it. Delete removes the selection.",
 	"Click two grid intersections. Nearby endpoints snap together. Escape cancels.",
 	"Click start, end, then a third grid intersection that the curve passes through. Escape cancels.",
-	"Click a cell to place the player start. The spawn must be clear of terrain to playtest.",
+	"Click a cell to place the player start and race checkpoint 1. The spawn must be clear of terrain to playtest.",
 	"Click a cell to place a grapple orb. Use Select to move it, or Erase to remove it.",
-	"Click a terrain segment, spawn, or orb to remove it. Undo restores it."
+	"Click a cell to place the next numbered hoop. Select a hoop to change its order or mark it as the finish.",
+	"Click terrain, spawn, an orb, or a checkpoint to remove it. Undo restores it."
 ]
 
 class Gizmos extends Node2D:
@@ -69,6 +71,12 @@ var importing := false
 var clear_dialog: ConfirmationDialog
 var top_panel: PanelContainer
 var bottom_panel: PanelContainer
+var checkpoint_properties: HBoxContainer
+var checkpoint_order: SpinBox
+var checkpoint_finish: CheckButton
+var race_dialog: ConfirmationDialog
+var race_laps: SpinBox
+var race_explanation: Label
 
 func _ready() -> void:
 	camera = Camera2D.new()
@@ -183,6 +191,7 @@ func _build_ui() -> void:
 	actions.add_child(_strip([
 		_button("Export code", func() -> void: _open_code(false)),
 		_button("Import code", func() -> void: _open_code(true)),
+		_button("Race settings", _open_race_settings),
 	]))
 	var tools := HFlowContainer.new()
 	rows.add_child(tools)
@@ -208,6 +217,22 @@ func _build_ui() -> void:
 	counts.add_theme_font_size_override("normal_font_size", 14)
 	counts.add_theme_color_override("default_color", counts.get_theme_color("font_color", "Label"))
 	tools.add_child(counts)
+	checkpoint_properties = HBoxContainer.new()
+	checkpoint_properties.add_theme_constant_override("separation", 14)
+	rows.add_child(checkpoint_properties)
+	var checkpoint_label := Label.new()
+	checkpoint_label.text = "Selected hoop · number"
+	checkpoint_properties.add_child(checkpoint_label)
+	checkpoint_order = SpinBox.new()
+	checkpoint_order.min_value = 2
+	checkpoint_order.max_value = 129
+	checkpoint_order.value_changed.connect(_change_checkpoint_number)
+	checkpoint_properties.add_child(checkpoint_order)
+	checkpoint_finish = CheckButton.new()
+	checkpoint_finish.text = "Finish checkpoint"
+	checkpoint_finish.tooltip_text = "The finish moves to the end of the route. Clear this to finish at spawn and enable laps."
+	checkpoint_finish.toggled.connect(_change_checkpoint_finish)
+	checkpoint_properties.add_child(checkpoint_finish)
 	var bottom := MenuPanel.new()
 	bottom_panel = bottom
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
@@ -246,15 +271,95 @@ func _build_ui() -> void:
 	help.text = "  [color=#69bfff]|[/color]  ".join(hints)
 	footer.add_child(help)
 	_build_code_dialog()
+	_build_race_dialog()
 	clear_dialog = ConfirmationDialog.new()
 	DialogStyle.apply(clear_dialog)
 	clear_dialog.title = "Clear this level?"
-	clear_dialog.dialog_text = "Remove all terrain, orbs, and the spawn? You can undo this."
+	clear_dialog.dialog_text = "Remove all terrain, orbs, checkpoints, and the spawn? You can undo this."
 	clear_dialog.confirmed.connect(clear_level)
 	ui.add_child(clear_dialog)
 	clear_dialog.get_ok_button().theme_type_variation = &"DangerButton"
 	for button in [clear_dialog.get_ok_button(), clear_dialog.get_cancel_button()]:
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+
+func _build_race_dialog() -> void:
+	race_dialog = ConfirmationDialog.new()
+	race_dialog.title = "Race settings"
+	DialogStyle.apply(race_dialog)
+	ui.add_child(race_dialog)
+	var column := VBoxContainer.new()
+	column.custom_minimum_size.x = 440
+	column.add_theme_constant_override("separation", 14)
+	race_dialog.add_child(column)
+	race_explanation = Label.new()
+	race_explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(race_explanation)
+	var caption := Label.new()
+	caption.text = "Laps"
+	column.add_child(caption)
+	race_laps = SpinBox.new()
+	race_laps.min_value = 1
+	race_laps.max_value = 99
+	column.add_child(race_laps)
+	race_dialog.confirmed.connect(_apply_race_settings)
+
+func _open_race_settings() -> void:
+	_cancel_action()
+	race_laps.value = document.race_laps
+	race_laps.editable = document.finish_checkpoint == 1
+	race_explanation.text = "Spawn is checkpoint 1. Pass each numbered hoop, then return to spawn to finish a lap. Select a hoop to change its number or set a separate finish."
+	if document.finish_checkpoint > 1:
+		race_explanation.text = "Checkpoint %d is the finish. Pass every hoop in order to finish the race. To enable laps, select the finish hoop and clear Finish checkpoint." % document.finish_checkpoint
+	race_dialog.popup_centered(Vector2i(480, 0))
+	_fit_race_dialog.call_deferred()
+
+func _fit_race_dialog() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if race_dialog.visible:
+		race_dialog.reset_size()
+		race_dialog.move_to_center()
+
+func _apply_race_settings() -> void:
+	var next := document.copy()
+	next.race_laps = int(race_laps.value) if next.finish_checkpoint == 1 else 1
+	_commit(next)
+	_set_status("Race settings updated. Place hoops with Race checkpoint; select a hoop to edit its order.")
+
+func _refresh_checkpoint_properties() -> void:
+	var selected: bool = selection.get("kind", "") == "checkpoint" and int(selection.get("index", -1)) >= 0 and int(selection.get("index", -1)) < document.checkpoints.size()
+	checkpoint_properties.visible = selected
+	if not selected:
+		return
+	var number := int(selection["index"]) + 2
+	var finish := document.finish_checkpoint == number
+	checkpoint_order.set_block_signals(true)
+	checkpoint_order.max_value = document.checkpoints.size() + (0 if document.finish_checkpoint > 1 and not finish else 1)
+	checkpoint_order.set_value_no_signal(number)
+	checkpoint_order.set_block_signals(false)
+	checkpoint_order.editable = not finish
+	checkpoint_finish.set_pressed_no_signal(finish)
+
+func _change_checkpoint_number(value: float) -> void:
+	if selection.get("kind", "") != "checkpoint":
+		return
+	_finish_drag()
+	var next := document.copy()
+	selection["index"] = next.reorder_checkpoint(selection["index"], int(value))
+	_commit(next)
+	_set_status("Checkpoint order updated. The spawn remains checkpoint 1.")
+
+func _change_checkpoint_finish(enabled: bool) -> void:
+	if selection.get("kind", "") != "checkpoint":
+		return
+	_finish_drag()
+	var next := document.copy()
+	if enabled:
+		selection["index"] = next.mark_finish(selection["index"])
+	else:
+		next.finish_checkpoint = 1
+	_commit(next)
+	_set_status("Finish hoop moved to the end of the race." if enabled else "Finish returns to spawn. Set the lap count in Race settings.")
 
 func _build_code_dialog() -> void:
 	code_dialog = ConfirmationDialog.new()
@@ -407,7 +512,8 @@ func _refresh() -> void:
 	terrain.set_document(document)
 	undo_button.disabled = undo_stack.is_empty()
 	redo_button.disabled = redo_stack.is_empty()
-	counts.text = "  %s/1024 segments [color=#69bfff]|[/color] %s/128 orbs" % [document.segments.size(), document.orbs.size()]
+	counts.text = "  %s/1024 segments [color=#69bfff]|[/color] %s/128 orbs [color=#69bfff]|[/color] %s/128 hoops" % [document.segments.size(), document.orbs.size(), document.checkpoints.size()]
+	_refresh_checkpoint_properties()
 	_update_canvas_cursor()
 	queue_redraw()
 	gizmos.queue_redraw()
@@ -494,7 +600,7 @@ func _update_canvas_cursor() -> void:
 	Input.set_default_cursor_shape(shape)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if code_dialog.visible or clear_dialog.visible:
+	if code_dialog.visible or clear_dialog.visible or race_dialog.visible:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
@@ -568,11 +674,11 @@ func _click(world: Vector2) -> void:
 		selection = _pick_object(world)
 		_delete_selection()
 		return
-	if tool in [Tool.SPAWN, Tool.ORB]:
+	if tool in [Tool.SPAWN, Tool.ORB, Tool.CHECKPOINT]:
 		var next := document.copy()
 		if tool == Tool.SPAWN:
 			next.spawn = hover_cell
-		else:
+		elif tool == Tool.ORB:
 			if next.orbs.has(hover_cell):
 				_set_status("There is already an orb in that cell.")
 				return
@@ -580,8 +686,22 @@ func _click(world: Vector2) -> void:
 				_set_status("Maximum 128 grapple orbs reached.", true)
 				return
 			next.orbs.append(hover_cell)
+		else:
+			if next.checkpoints.size() >= LevelDocument.MAX_CHECKPOINTS:
+				_set_status("Maximum 128 race checkpoints reached.", true)
+				return
+			var index := next.checkpoints.size() if next.finish_checkpoint == 1 else next.checkpoints.size() - 1
+			next.checkpoints.insert(index, hover_cell)
+			if next.finish_checkpoint > 1:
+				next.finish_checkpoint += 1
+			selection = {"kind": "checkpoint", "index": index}
+		var error := next.validate()
+		if not error.is_empty():
+			selection.clear()
+			_set_status(error, true)
+			return
 		_commit(next)
-		_set_status("Spawn placed." if tool == Tool.SPAWN else "Grapple orb placed.")
+		_set_status("Checkpoint placed. Select a hoop to edit its number or finish status." if tool == Tool.CHECKPOINT else ("Spawn placed as checkpoint 1." if tool == Tool.SPAWN else "Grapple orb placed."))
 		return
 	if document.segments.size() >= LevelDocument.MAX_SEGMENTS:
 		_set_status("Maximum 1,024 terrain segments reached.", true)
@@ -620,6 +740,9 @@ func _pick_object(world: Vector2) -> Dictionary:
 	var spawn_tolerance := maxf(LevelDocument.PLAYER_RADIUS, 12.0 / camera.zoom.x)
 	if LevelDocument.valid_cell(document.spawn) and world.distance_to(LevelDocument.cell_position(document.spawn)) <= spawn_tolerance:
 		return {"kind": "spawn"}
+	for index in range(document.checkpoints.size() - 1, -1, -1):
+		if world.distance_to(LevelDocument.cell_position(document.checkpoints[index])) <= maxf(LevelDocument.CHECKPOINT_RADIUS + 12.0, 16.0 / camera.zoom.x):
+			return {"kind": "checkpoint", "index": index}
 	for index in range(document.orbs.size() - 1, -1, -1):
 		if world.distance_to(LevelDocument.cell_position(document.orbs[index])) <= maxf(36.0, 12.0 / camera.zoom.x):
 			return {"kind": "orb", "index": index}
@@ -654,13 +777,14 @@ func _select_at(world: Vector2) -> void:
 		drag = handle
 	else:
 		selection = _pick_object(world)
-		if selection.get("kind", "") in ["spawn", "orb"]:
+		if selection.get("kind", "") in ["spawn", "orb", "checkpoint"]:
 			drag = selection.duplicate()
 	if not drag.is_empty():
 		drag_original = document.copy()
 		drag_valid = true
 		last_drag_grid = Vector2i(-999, -999)
 	_update_canvas_cursor()
+	_refresh_checkpoint_properties()
 	gizmos.queue_redraw()
 
 func _update_drag(world: Vector2) -> void:
@@ -674,6 +798,7 @@ func _update_drag(world: Vector2) -> void:
 		"middle": next.segments[drag["index"]]["m"] = grid
 		"spawn": next.spawn = grid
 		"orb": next.orbs[drag["index"]] = grid
+		"checkpoint": next.checkpoints[drag["index"]] = grid
 	var error := next.validate()
 	if drag["kind"] == "orb" and next.orbs.count(grid) > 1:
 		error = "There is already an orb in that cell."
@@ -715,6 +840,7 @@ func _delete_selection() -> void:
 		"segment": next.segments.remove_at(selection["index"])
 		"spawn": next.spawn = Vector2i(-1, -1)
 		"orb": next.orbs.remove_at(selection["index"])
+		"checkpoint": next.remove_checkpoint(selection["index"])
 	selection.clear()
 	_commit(next)
 	_set_status("Removed. Undo restores it.")
@@ -784,6 +910,11 @@ func draw_gizmos(canvas: Node2D) -> void:
 		var cross_size := maxf(30.0, 3.5 * scale_factor)
 		canvas.draw_line(spawn_position + Vector2(-cross_size, 0), spawn_position + Vector2(cross_size, 0), accent, 1.5 * scale_factor)
 		canvas.draw_line(spawn_position + Vector2(0, -cross_size), spawn_position + Vector2(0, cross_size), accent, 1.5 * scale_factor)
+		_draw_checkpoint(canvas, spawn_position, 1, selection.get("kind", "") == "spawn", false, scale_factor)
+	for index in range(document.checkpoints.size()):
+		var selected: bool = selection.get("kind", "") == "checkpoint" and selection["index"] == index
+		var hovered: bool = hovered_object.get("kind", "") == "checkpoint" and hovered_object["index"] == index
+		_draw_checkpoint(canvas, LevelDocument.cell_position(document.checkpoints[index]), index + 2, selected, hovered, scale_factor)
 	if not pending.is_empty():
 		var preview := _pending_segment(hover_vertex)
 		var valid := LevelDocument.segment_error(preview).is_empty()
@@ -792,7 +923,18 @@ func draw_gizmos(canvas: Node2D) -> void:
 		for point in pending:
 			canvas.draw_circle(LevelDocument.vertex_position(point), 6.0 * scale_factor, accent)
 	if mouse_on_board:
-		if tool in [Tool.SPAWN, Tool.ORB]:
+		if tool in [Tool.SPAWN, Tool.ORB, Tool.CHECKPOINT]:
 			canvas.draw_rect(Rect2(Vector2(hover_cell) * LevelDocument.CELL_SIZE, Vector2.ONE * LevelDocument.CELL_SIZE), Color(0.45, 0.9, 0.8, 0.25))
 		elif tool in [Tool.LINE, Tool.CURVE]:
 			canvas.draw_circle(LevelDocument.vertex_position(hover_vertex), 5.0 * scale_factor, accent)
+
+func _draw_checkpoint(canvas: Node2D, point: Vector2, number: int, selected: bool, hovered: bool, scale_factor: float) -> void:
+	var caption := str(number)
+	if number == 1:
+		caption += " START / FINISH" if document.finish_checkpoint == 1 else " START"
+	elif number == document.finish_checkpoint:
+		caption += " FINISH"
+	var color := Color("ec839a") if number == document.finish_checkpoint else Color("46c7bb")
+	if selected or hovered:
+		color = Color("ffc947")
+	RaceCheckpoint.draw_hoop(canvas, point, maxf(LevelDocument.CHECKPOINT_RADIUS, 16.0 * scale_factor), caption, color, 4.0 * scale_factor, roundi(16 * scale_factor))

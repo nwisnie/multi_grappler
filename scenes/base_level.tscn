@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://blrwb7ropihy8"]
+[gd_scene load_steps=16 format=3 uid="uid://blrwb7ropihy8"]
 
 [ext_resource type="PackedScene" path="res://scenes/player_ball.tscn" id="1_ball"]
 [ext_resource type="Script" path="res://scripts/editor/level_sketch.gd" id="2_sketch"]
@@ -6,6 +6,12 @@
 [ext_resource type="PackedScene" path="res://scenes/grapple_orb.tscn" id="5_orb"]
 [ext_resource type="Texture2D" uid="uid://cnsqfkmrtdeg6" path="res://assets/images/levels/bg_sky.png" id="6_sky"]
 [ext_resource type="Script" path="res://scripts/levels/sky_background.gd" id="7_sky_follow"]
+[ext_resource type="Script" path="res://scripts/levels/tutorial.gd" id="8_tutorial"]
+[ext_resource type="Script" path="res://scripts/levels/tutorial_instruction_area.gd" id="9_instruction_area"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_instruction"]
+content_margin_top = 14.0
+content_margin_bottom = 14.0
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_ball"]
 friction = 1.2
@@ -26,6 +32,83 @@ friction = 1.1
 friction = 1.1
 
 [node name="BaseLevel" type="Node2D"]
+script = ExtResource("8_tutorial")
+
+[node name="TutorialAreas" type="Node2D" parent="."]
+
+[node name="Movement" type="Area2D" parent="TutorialAreas"]
+position = Vector2(-1000, 100)
+collision_layer = 0
+monitorable = false
+script = ExtResource("9_instruction_area")
+instruction = "WASD to move"
+instruction_priority = 10
+
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="TutorialAreas/Movement"]
+position = Vector2(241, 369)
+scale = Vector2(0.564103, 0.415698)
+polygon = PackedVector2Array(-1000, -1100, 950, -1100, 950, 620, -1000, 620)
+
+[node name="Launch" type="Area2D" parent="TutorialAreas"]
+position = Vector2(850, 400)
+collision_layer = 0
+monitorable = false
+script = ExtResource("9_instruction_area")
+instruction = "Left Click to launch off walls and floors."
+instruction_priority = 20
+
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="TutorialAreas/Launch"]
+position = Vector2(-650, 518)
+scale = Vector2(0.447576, 0.379003)
+polygon = PackedVector2Array(-950, -1000, 950, -1000, 950, 600, -950, 600)
+
+[node name="WallGrapple" type="Area2D" parent="TutorialAreas"]
+position = Vector2(3200, -1000)
+collision_layer = 0
+monitorable = false
+script = ExtResource("9_instruction_area")
+instruction = "Space to Grapple Up Walls"
+instruction_priority = 30
+
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="TutorialAreas/WallGrapple"]
+position = Vector2(-1531, 518)
+scale = Vector2(0.541765, 0.591546)
+polygon = PackedVector2Array(-1450, -1900, 1450, -1900, 1450, 2000, -1450, 2000)
+
+[node name="OrbGrapple" type="Area2D" parent="TutorialAreas"]
+position = Vector2(6200, -2700)
+collision_layer = 0
+monitorable = false
+script = ExtResource("9_instruction_area")
+instruction = "Space to Grapple Toward Orbs"
+instruction_priority = 40
+
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="TutorialAreas/OrbGrapple"]
+position = Vector2(-1857, 233)
+scale = Vector2(0.348013, 0.570689)
+polygon = PackedVector2Array(-1600, -1100, 2000, -1100, 2000, 1100, -1600, 1100)
+
+[node name="TutorialInstructions" type="CanvasLayer" parent="."]
+layer = 20
+
+[node name="Instruction" type="RichTextLabel" parent="TutorialInstructions"]
+anchors_preset = -1
+anchor_left = 0.05
+anchor_top = 1.0
+anchor_right = 0.95
+anchor_bottom = 1.0
+offset_top = -112.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+theme_override_colors/default_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 1, 1, 0.95)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/normal_font_size = 28
+theme_override_styles/normal = SubResource("StyleBoxEmpty_instruction")
+bbcode_enabled = true
+scroll_active = false
 
 [node name="SkyBackground" type="Sprite2D" parent="."]
 z_index = -4096

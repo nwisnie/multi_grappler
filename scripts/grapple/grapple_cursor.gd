@@ -27,8 +27,7 @@ func _ready() -> void:
 
 func set_target(screen_position: Vector2, available: bool, is_attached: bool) -> void:
 	target_position = screen_position
-	# The player smooths its mouse aim before raycasting. Always draw at the
-	# resulting surface hit (or fixed grapple anchor), never between hits.
+	# Draw directly at the current grapple ray's hit (or fixed grapple anchor).
 	position = screen_position
 	attached = is_attached
 	var target_visible := available and get_viewport_rect().has_point(screen_position)

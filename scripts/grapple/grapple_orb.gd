@@ -1,7 +1,7 @@
 @tool
 extends Area2D
 
-const OUTLINE_POINTS := 96
+const RippleOutline := preload("res://scripts/grapple/ripple_outline.gd")
 const INK := Color("18272e")
 
 @export_range(8.0, 80.0, 1.0) var radius := 36.0:
@@ -56,15 +56,7 @@ func get_grapple_ring_radius() -> float:
 	return radius + outline_width * 0.5 + 16.0
 
 func _outline() -> PackedVector2Array:
-	var points := PackedVector2Array()
-	for index in range(OUTLINE_POINTS):
-		var angle := TAU * float(index) / float(OUTLINE_POINTS)
-		# Two traveling waves ripple around the rim. Keep the stroke overlapping
-		# the circular fill even at the deepest trough, so there are no gaps.
-		var wave := sin(angle * 4.0 - ripple_time * 2.0 + shape_seed) * 0.7 + sin(angle * 7.0 + ripple_time + shape_seed * 1.7) * 0.3
-		var amplitude := minf(radius * irregularity, outline_width * 0.4)
-		points.append(Vector2.RIGHT.rotated(angle) * (radius + amplitude * wave))
-	return points
+	return RippleOutline.points(radius, outline_width, irregularity, shape_seed, ripple_time)
 
 func _update_shape() -> void:
 	if is_node_ready():

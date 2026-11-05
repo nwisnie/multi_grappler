@@ -25,6 +25,35 @@ func _run() -> void:
 	await process_frame
 	check(shell.title_screen.visible and shell.world == null, "Start on title, without running tutorial")
 	check(shell.title_screen.tutorial_button.text == "Tutorial" and shell.title_screen.editor_button.text == "Level Editor", "Title has tutorial and editor routes")
+	check(shell.title_screen.settings_button.text == "Settings" and shell.title_screen.fullscreen_button.text == "Fullscreen", "Title has settings and fullscreen controls")
+	for button in [shell.title_screen.settings_button, shell.title_screen.fullscreen_button]:
+		check(root.get_visible_rect().encloses(button.get_global_rect()), "New title buttons fit inside the viewport")
+	shell.title_screen.settings_button.pressed.emit()
+	check(shell.settings_dialog.visible and shell.settings_dialog.exclusive and shell.dimmer.visible, "Title settings opens a dimmed modal popup")
+	check(not paused and shell.world == null, "Title settings does not start or pause gameplay")
+	shell.camera_zoom_slider.value = 0.61
+	shell.wall_cursor_toggle.button_pressed = true
+	shell.settings_dialog.get_cancel_button().pressed.emit()
+	await process_frame
+	check(not shell.settings_dialog.visible and not shell.dimmer.visible and not shell.pause_dialog.visible, "Back from title settings restores the main menu")
+	check(shell.title_screen.settings_button.has_focus(), "Closing title settings restores keyboard focus")
+	shell.title_screen.settings_button.pressed.emit()
+	key(shell, KEY_ESCAPE)
+	check(not shell.settings_dialog.visible and not shell.dimmer.visible, "Escape closes title settings")
+	await process_frame
+	await process_frame
+	if DisplayServer.get_name() != "headless":
+		shell.title_screen.fullscreen_button.pressed.emit()
+		await process_frame
+		check(shell._is_fullscreen() and shell.title_screen.fullscreen_button.text == "Exit Fullscreen", "Title fullscreen button enters fullscreen")
+		shell.title_screen.settings_button.pressed.emit()
+		check(shell.fullscreen_toggle.button_pressed, "Settings reflects fullscreen entered from the title")
+		shell.fullscreen_toggle.button_pressed = false
+		await process_frame
+		check(not shell._is_fullscreen() and shell.title_screen.fullscreen_button.text == "Fullscreen", "Settings fullscreen toggle updates the title button")
+		shell._close_settings()
+		await process_frame
+		await process_frame
 	# Real GUI pointer/key events must share a persistent selection.
 	shell.title_screen.tutorial_button.grab_focus()
 	var pointer := InputEventMouseMotion.new()
@@ -79,6 +108,7 @@ func _run() -> void:
 	shell.title_screen.tutorial_button.pressed.emit()
 	await physics_frame
 	check(shell.world != null and not shell.title_screen.visible, "Tutorial opens base level")
+	check(shell._player().initial_camera_zoom == Vector2.ONE * 0.61 and shell._player().show_grapple_cursor, "Tutorial applies settings chosen from the main menu")
 	check(shell._player() != null and not shell.has_node("Navigation"), "Gameplay has a player and no top navigation")
 	key(shell, KEY_ESCAPE)
 	check(paused and shell.pause_dialog.visible and shell._player().controls_locked, "Escape freezes gameplay and opens pause menu")

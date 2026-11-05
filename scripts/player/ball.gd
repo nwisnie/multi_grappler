@@ -15,7 +15,6 @@ const CAMERA_BASE_ZOOM := Vector2(0.65, 0.65)
 const CAMERA_MAX_ZOOM_OUT := Vector2(0.45, 0.45)
 const CAMERA_ZOOM_SPEED := 3.5
 const GRAPPLE_MAX_DISTANCE := 2200.0
-const GRAPPLE_AIM_RESPONSE := 12.0
 const GrappleCursorScript := preload("res://scripts/grapple/grapple_cursor.gd")
 const GrappleEffectScript := preload("res://scripts/grapple/grapple_effect.gd")
 const GRAPPLE_VISUAL_SHOOT_SPEED := 10000.0
@@ -97,8 +96,6 @@ var player_health_bar: EnemyHealthBar
 var grapple_cursor: Node2D
 var grapple_target_available := false
 var grapple_target_position := Vector2.ZERO
-var grapple_aim_screen_position := Vector2.ZERO
-var grapple_aim_initialized := false
 var highlighted_grapple_target: Node
 var grapple_effect: Node2D
 var grapple_launch_position := Vector2.ZERO
@@ -199,11 +196,12 @@ func _process(delta: float) -> void:
 	_update_squash_and_stretch(delta)
 	_update_jab_visual_line()
 	_update_heart_ui(delta)
+	# Resolve the current mouse ray every rendered frame, with no aim smoothing.
+	_refresh_grapple_target()
 	_update_grapple_cursor()
 	_update_grapple_visuals(delta)
 
 func _physics_process(delta: float) -> void:
-	_update_grapple_aim(delta)
 	_refresh_grapple_target()
 	damage_immunity_remaining = maxf(damage_immunity_remaining - delta, 0.0)
 	if controls_locked:
@@ -763,21 +761,9 @@ func _update_grapple_visuals(delta: float) -> void:
 	grapple_line.set_point_position(1, tip)
 	grapple_effect.update_visual(tip, direction, grapple_contact_normal, progress >= 1.0, grapple_hits_terrain, delta)
 
-func _update_grapple_aim(delta: float) -> void:
-	var mouse_screen_position := get_viewport().get_mouse_position()
-	if not grapple_aim_initialized or controls_locked:
-		grapple_aim_screen_position = mouse_screen_position
-		grapple_aim_initialized = true
-	else:
-		# Only mouse motion is eased. Player/camera movement affects the ray
-		# immediately through its origin and the current canvas transform.
-		grapple_aim_screen_position = grapple_aim_screen_position.lerp(mouse_screen_position, 1.0 - exp(-GRAPPLE_AIM_RESPONSE * delta))
-
 func _find_grapple_target() -> Dictionary:
 	var origin: Vector2 = global_position
 	var mouse_position: Vector2 = get_global_mouse_position()
-	if grapple_aim_initialized:
-		mouse_position = get_canvas_transform().affine_inverse() * grapple_aim_screen_position
 	var ray_direction: Vector2 = mouse_position - origin
 	if ray_direction.length_squared() < 1.0:
 		return {}

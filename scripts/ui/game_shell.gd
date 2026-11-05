@@ -61,6 +61,8 @@ func _ready() -> void:
 	title_screen.editor_requested.connect(show_editor)
 	title_screen.join_requested.connect(show_join_menu)
 	title_screen.host_requested.connect(show_host_menu)
+	title_screen.settings_requested.connect(show_settings)
+	title_screen.fullscreen_requested.connect(_toggle_fullscreen)
 	dimmer = ColorRect.new()
 	dimmer.color = Color(0.015, 0.035, 0.06, 0.7)
 	menu_layer.add_child(dimmer)
@@ -191,6 +193,8 @@ func _exit_tree() -> void:
 		get_tree().paused = false
 
 func _process(delta: float) -> void:
+	if title_screen.visible or settings_dialog.visible:
+		_sync_fullscreen_controls()
 	if loading_screen.visible:
 		loading_elapsed += delta
 		loading_title.text = "Loading" + ".".repeat(1 + int(loading_elapsed * 2.0) % 3)
@@ -416,11 +420,24 @@ func _build_settings_menu() -> void:
 	column.add_child(wall_cursor_toggle)
 	fullscreen_toggle = CheckButton.new()
 	fullscreen_toggle.text = "Fullscreen"
-	fullscreen_toggle.toggled.connect(func(enabled: bool) -> void:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if enabled else DisplayServer.WINDOW_MODE_WINDOWED)
-	)
+	fullscreen_toggle.toggled.connect(_set_fullscreen)
 	DialogStyle.ButtonPulse.install(fullscreen_toggle, false, true)
 	column.add_child(fullscreen_toggle)
+
+func _is_fullscreen() -> bool:
+	return DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN, DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
+
+func _set_fullscreen(enabled: bool) -> void:
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if enabled else DisplayServer.WINDOW_MODE_WINDOWED)
+	_sync_fullscreen_controls()
+
+func _toggle_fullscreen() -> void:
+	_set_fullscreen(not _is_fullscreen())
+
+func _sync_fullscreen_controls() -> void:
+	var enabled := _is_fullscreen()
+	fullscreen_toggle.set_pressed_no_signal(enabled)
+	title_screen.fullscreen_button.text = "Exit Fullscreen" if enabled else "Fullscreen"
 
 func _player() -> RigidBody2D:
 	if world is CustomLevel:
@@ -462,13 +479,18 @@ func resume_game() -> void:
 
 func show_settings() -> void:
 	pause_dialog.hide()
-	fullscreen_toggle.set_pressed_no_signal(DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN)
+	dimmer.show()
+	_sync_fullscreen_controls()
 	_popup(settings_dialog)
+	camera_zoom_slider.grab_focus.call_deferred()
 
 func _close_settings() -> void:
 	settings_dialog.hide()
 	if is_instance_valid(world):
 		_popup(pause_dialog)
+	else:
+		dimmer.hide()
+		title_screen.settings_button.grab_focus.call_deferred()
 
 func _clear_menus() -> void:
 	loading_screen.hide()

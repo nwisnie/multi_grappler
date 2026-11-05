@@ -49,11 +49,22 @@ func _run() -> void:
 	document.segments.append({"kind": 1, "a": Vector2i(20, 10), "b": Vector2i(30, 10), "m": Vector2i(25, 5)})
 	document.spawn = Vector2i(12, 8)
 	document.orbs.append(Vector2i(25, 3))
+	document.checkpoints.assign([Vector2i(18, 7), Vector2i(28, 5)])
+	document.race_laps = 2
 	shell.editor._commit(document)
 	shell.editor.camera.position = Vector2(2400, 900)
 	shell.editor.camera.zoom = Vector2.ONE * 0.35
 	shell.editor.queue_redraw()
 	await capture("editor")
+	shell.editor.selection = {"kind": "checkpoint", "index": 0}
+	shell.editor._refresh()
+	await capture("checkpoint-properties")
+	shell.editor._open_race_settings()
+	await process_frame
+	await process_frame
+	await process_frame
+	await capture("race-settings")
+	shell.editor.race_dialog.hide()
 	shell.editor._set_tool(GridLevelEditor.Tool.SELECT)
 	shell.editor._update_hover((Vector2(2400, 1200) - shell.editor.camera.position) * shell.editor.camera.zoom.x + Vector2(root.size) * 0.5)
 	await capture("handles-hover")

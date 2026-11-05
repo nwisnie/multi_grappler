@@ -1,6 +1,8 @@
 extends "res://scripts/player/ball.gd"
 ## Each player simulates their own ball; replicas only render synchronized state.
 
+signal respawned
+
 var network_position := Vector2.ZERO
 var network_rotation := 0.0
 var network_velocity := Vector2.ZERO
@@ -117,4 +119,5 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		state.transform = Transform2D(0.0, spawn_position)
 		state.linear_velocity = Vector2.ZERO
 		state.angular_velocity = 0.0
+		respawned.emit.call_deferred()
 	super._integrate_forces(state)

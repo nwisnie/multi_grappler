@@ -10,18 +10,54 @@ const HALF_WIDTH := CELL_SIZE * 0.5
 const PLAYER_RADIUS := 48.0 * 1.18
 const MAX_SEGMENTS := 1024
 const MAX_ORBS := 128
+const MAX_CHECKPOINTS := 128
+const CHECKPOINT_RADIUS := 180.0
 enum SegmentKind { LINE, CURVE }
 
 var segments: Array[Dictionary] = []
 var spawn := Vector2i(-1, -1)
 var orbs: Array[Vector2i] = []
+## Array order is race order; the spawn is always checkpoint 1.
+var checkpoints: Array[Vector2i] = []
+## 1 closes the course at spawn. A separate finish is always the last hoop.
+var finish_checkpoint := 1
+var race_laps := 1
 
 func copy() -> LevelDocument:
 	var result := LevelDocument.new()
 	result.segments = segments.duplicate(true)
 	result.spawn = spawn
 	result.orbs.assign(orbs)
+	result.checkpoints.assign(checkpoints)
+	result.finish_checkpoint = finish_checkpoint
+	result.race_laps = race_laps
 	return result
+
+func reorder_checkpoint(index: int, number: int) -> int:
+	if finish_checkpoint > 1 and index == checkpoints.size() - 1:
+		return index
+	var last_number := checkpoints.size() if finish_checkpoint > 1 else checkpoints.size() + 1
+	var destination := clampi(number, 2, last_number) - 2
+	var point := checkpoints[index]
+	checkpoints.remove_at(index)
+	checkpoints.insert(destination, point)
+	return destination
+
+func mark_finish(index: int) -> int:
+	var point := checkpoints[index]
+	checkpoints.remove_at(index)
+	checkpoints.append(point)
+	finish_checkpoint = checkpoints.size() + 1
+	race_laps = 1
+	return checkpoints.size() - 1
+
+func remove_checkpoint(index: int) -> void:
+	var removed_finish := finish_checkpoint > 1 and index == checkpoints.size() - 1
+	checkpoints.remove_at(index)
+	if removed_finish:
+		finish_checkpoint = 1
+	elif finish_checkpoint > 1:
+		finish_checkpoint = checkpoints.size() + 1
 
 static func vertex_position(point: Vector2i) -> Vector2:
 	return Vector2(point) * CELL_SIZE
@@ -100,6 +136,23 @@ static func segment_error(segment: Dictionary) -> String:
 	return ""
 
 func validate() -> String:
+	if checkpoints.size() > MAX_CHECKPOINTS:
+		return "Level limit: 128 race checkpoints, plus the spawn."
+	if race_laps < 1 or race_laps > 99:
+		return "Choose between 1 and 99 laps."
+	if finish_checkpoint != 1 and (checkpoints.is_empty() or finish_checkpoint != checkpoints.size() + 1):
+		return "A separate finish checkpoint must be the last hoop."
+	if finish_checkpoint > 1 and race_laps != 1:
+		return "Laps require finishing at the spawn checkpoint."
+	var occupied := {}
+	if valid_cell(spawn):
+		occupied[spawn] = true
+	for checkpoint in checkpoints:
+		if not valid_cell(checkpoint):
+			return "Race checkpoints must be cells inside the grid."
+		if occupied.has(checkpoint):
+			return "Race checkpoints and the spawn must occupy different cells."
+		occupied[checkpoint] = true
 	if segments.size() > MAX_SEGMENTS or orbs.size() > MAX_ORBS:
 		return "Level limit: 1,024 segments and 128 grapple orbs."
 	if spawn != Vector2i(-1, -1) and not valid_cell(spawn):

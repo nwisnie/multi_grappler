@@ -3,9 +3,11 @@ extends RefCounted
 ## MG1- + Base64(DEFLATE(payload)). No resources or executable objects are decoded.
 ## Payload: version u8, segment count u16 LE, orb count u8, spawn x/y u8,
 ## segments [kind,a.x,a.y,b.x,b.y,(m.x,m.y)], orbs [x,y]. No spawn = 255,255.
+## Optional race trailer: 'R' u8, count u8, laps u8, finish number u8, cells [x,y].
 
 const PREFIX := "MG1-"
-const MAX_PAYLOAD := 6 + LevelDocument.MAX_SEGMENTS * 7 + LevelDocument.MAX_ORBS * 2
+const RACE_TAG := 82
+const MAX_PAYLOAD := 6 + LevelDocument.MAX_SEGMENTS * 7 + LevelDocument.MAX_ORBS * 2 + 4 + LevelDocument.MAX_CHECKPOINTS * 2
 const MAX_CODE_LENGTH := 16384
 
 static func encode_level(document: LevelDocument) -> String:
@@ -27,6 +29,11 @@ static func encode_level(document: LevelDocument) -> String:
 	for orb in document.orbs:
 		payload.append(orb.x)
 		payload.append(orb.y)
+	if not document.checkpoints.is_empty() or document.race_laps != 1:
+		payload.append_array(PackedByteArray([RACE_TAG, document.checkpoints.size(), document.race_laps, document.finish_checkpoint]))
+		for checkpoint in document.checkpoints:
+			payload.append(checkpoint.x)
+			payload.append(checkpoint.y)
 	return PREFIX + Marshalls.raw_to_base64(payload.compress(FileAccess.COMPRESSION_DEFLATE))
 
 static func decode_level(code: String) -> Dictionary:
@@ -71,11 +78,23 @@ static func decode_level(code: String) -> Dictionary:
 			segment["m"] = Vector2i(payload[cursor], payload[cursor + 1])
 			cursor += 2
 		document.segments.append(segment)
-	if cursor + orb_count * 2 != payload.size():
+	if cursor + orb_count * 2 > payload.size():
 		return {"error": "The level code has missing or unexpected data."}
 	for index in range(orb_count):
 		document.orbs.append(Vector2i(payload[cursor], payload[cursor + 1]))
 		cursor += 2
+	if cursor < payload.size():
+		if cursor + 4 > payload.size() or payload[cursor] != RACE_TAG:
+			return {"error": "The level code has unexpected race data."}
+		var checkpoint_count := int(payload[cursor + 1])
+		document.race_laps = int(payload[cursor + 2])
+		document.finish_checkpoint = int(payload[cursor + 3])
+		cursor += 4
+		if checkpoint_count > LevelDocument.MAX_CHECKPOINTS or cursor + checkpoint_count * 2 != payload.size():
+			return {"error": "The race checkpoint data is damaged or exceeds the limit."}
+		for index in range(checkpoint_count):
+			document.checkpoints.append(Vector2i(payload[cursor], payload[cursor + 1]))
+			cursor += 2
 	var error := document.validate()
 	if not error.is_empty():
 		return {"error": error}

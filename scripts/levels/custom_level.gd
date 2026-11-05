@@ -7,10 +7,12 @@ const PlayerScene := preload("res://scenes/player_ball.tscn")
 const OrbScene := preload("res://scenes/grapple_orb.tscn")
 const SkyScript := preload("res://scripts/levels/sky_background.gd")
 const SkyTexture := preload("res://assets/images/levels/bg_sky.png")
+const RaceProgress := preload("res://scripts/levels/race_progress.gd")
 
 var document: LevelDocument
 var player: RigidBody2D
 var restart_pending := false
+var race: Node2D
 
 func prepare(value: LevelDocument) -> String:
 	var error := value.playtest_error()
@@ -44,6 +46,7 @@ func _setup_environment() -> void:
 
 func restart() -> void:
 	restart_pending = false
+	_clear_race()
 	if is_instance_valid(player):
 		remove_child(player)
 		player.queue_free()
@@ -54,6 +57,23 @@ func restart() -> void:
 	player.set_controls_locked(true)
 	player.get_node("Camera2D").make_current()
 	player_spawned.emit(player)
+	_start_race(player)
+
+func _clear_race() -> void:
+	if is_instance_valid(race):
+		remove_child(race)
+		race.queue_free()
+	race = null
+
+func _start_race(ball: RigidBody2D) -> void:
+	_clear_race()
+	if document.checkpoints.is_empty():
+		return
+	race = RaceProgress.new()
+	race.name = "RaceProgress"
+	race.document = document
+	race.player = ball
+	add_child(race)
 
 func _physics_process(_delta: float) -> void:
 	if not is_instance_valid(player):

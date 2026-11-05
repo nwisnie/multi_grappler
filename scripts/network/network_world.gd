@@ -50,6 +50,11 @@ func _player_ready(ball: RigidBody2D) -> void:
 	if ball.is_multiplayer_authority():
 		player = ball
 		player_spawned.emit(ball)
+		_start_race(ball)
+		ball.respawned.connect(func() -> void:
+			if is_instance_valid(race):
+				race.reset()
+		)
 
 func add_player(peer_id: int) -> void:
 	if multiplayer.is_server() and not players.has_node(str(peer_id)):
