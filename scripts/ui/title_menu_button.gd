@@ -70,5 +70,9 @@ func _has_point(point: Vector2) -> bool:
 	return Geometry2D.is_point_in_polygon(point, _polygon(0.0))
 
 func draw_face(canvas: Control) -> void:
-	canvas.draw_colored_polygon(_polygon(0.0), Color.BLACK)
-	canvas.draw_colored_polygon(_polygon(BORDER_WIDTH), Color.WHITE.lerp(Color("bdbdbd"), maxf(_selection, 0.0)))
+	# Put the fill edge under an antialiased stroke, so both sides of the
+	# slanted border stay smooth without enabling antialiasing for all gameplay.
+	var outline := _polygon(BORDER_WIDTH * 0.5)
+	canvas.draw_colored_polygon(outline, Color.WHITE.lerp(Color("bdbdbd"), maxf(_selection, 0.0)))
+	outline.append(outline[0])
+	canvas.draw_polyline(outline, Color.BLACK, BORDER_WIDTH, true)

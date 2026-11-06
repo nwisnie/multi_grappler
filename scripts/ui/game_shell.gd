@@ -217,6 +217,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				resume_game()
 			elif is_instance_valid(world):
 				pause_game()
+			elif event.keycode == KEY_ESCAPE and title_screen.visible and title_screen.multiplayer_actions.visible:
+				title_screen.show_main_options()
 			else:
 				return
 			get_viewport().set_input_as_handled()
@@ -518,7 +520,7 @@ func show_main_menu() -> void:
 	_dispose_world()
 	screen = Screen.MAIN_MENU
 	title_screen.show()
-	title_screen.tutorial_button.grab_focus.call_deferred()
+	title_screen.show_main_options()
 
 func show_demo() -> void:
 	_clear_menus()

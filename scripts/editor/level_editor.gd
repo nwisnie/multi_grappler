@@ -9,7 +9,7 @@ const ToolbarButtonScript := preload("res://scripts/editor/editor_toolbar_button
 const RaceCheckpoint := preload("res://scripts/levels/race_checkpoint.gd")
 
 enum Tool { SELECT, LINE, CURVE, SPAWN, ORB, CHECKPOINT, ERASE }
-const TOOL_NAMES := ["Select / move", "Line", "Curve", "Spawn", "Grapple orb", "Race checkpoint", "Erase"]
+const TOOL_NAMES := ["Select", "Line", "Curve", "Spawn", "Grapple orb", "Race checkpoint", "Erase"]
 const INSTRUCTIONS := [
 	"Drag endpoints to move a shared joint; drag the curve's diamond to reshape it. Delete removes the selection.",
 	"Click two grid intersections. Nearby endpoints snap together. Escape cancels.",
@@ -24,6 +24,18 @@ class Gizmos extends Node2D:
 	var editor: GridLevelEditor
 	func _draw() -> void:
 		editor.draw_gizmos(self)
+
+class CheckpointOrderArrow extends EditorToolbarButton:
+	var direction := 1
+	func draw_face(canvas: Control) -> void:
+		super.draw_face(canvas)
+		var center := size * 0.5
+		var points := PackedVector2Array([
+			center + Vector2(-5, 2 * direction),
+			center + Vector2(0, -2 * direction),
+			center + Vector2(5, 2 * direction),
+		])
+		canvas.draw_polyline(points, get_theme_color("font_color"), 2.0, true)
 
 class MenuPanel extends PanelContainer:
 	var at_top := false
@@ -72,8 +84,10 @@ var clear_dialog: ConfirmationDialog
 var top_panel: PanelContainer
 var bottom_panel: PanelContainer
 var checkpoint_properties: HBoxContainer
-var checkpoint_order: SpinBox
-var checkpoint_finish: CheckButton
+var checkpoint_order: Label
+var checkpoint_order_up: Button
+var checkpoint_order_down: Button
+var checkpoint_finish: Button
 var race_dialog: ConfirmationDialog
 var race_laps: SpinBox
 var race_explanation: Label
@@ -136,6 +150,30 @@ func _menu_title(text: String) -> Label:
 	title.add_theme_color_override("font_color", Color("9fb4c5"))
 	title.add_theme_font_size_override("font_size", 14)
 	return title
+
+func _tool_group(title: String, tool_indices: Array) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.name = title.replace(" & ", "").replace(" ", "") + "Tools"
+	var style := StyleBoxEmpty.new()
+	style.content_margin_left = 0.0
+	style.content_margin_right = 0.0
+	style.content_margin_top = 6.0
+	style.content_margin_bottom = 6.0
+	panel.add_theme_stylebox_override("panel", style)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 4)
+	panel.add_child(column)
+	var heading := Label.new()
+	heading.text = title
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	heading.add_theme_font_size_override("font_size", 13)
+	heading.add_theme_color_override("font_color", Color("b3cbdc"))
+	column.add_child(heading)
+	var buttons: Array[Button] = []
+	for index in tool_indices:
+		buttons.append(tool_buttons[index])
+	column.add_child(_strip(buttons))
+	return panel
 
 func _style_menu(panel: MenuPanel, divider_at_top: bool) -> void:
 	var style := StyleBoxFlat.new()
@@ -206,7 +244,9 @@ func _build_ui() -> void:
 		if index == Tool.ERASE:
 			button.theme_type_variation = &"DangerButton"
 		tool_buttons.append(button)
-	tools.add_child(_strip(tool_buttons))
+	tools.add_child(_tool_group("Place Terrain", [Tool.LINE, Tool.CURVE, Tool.ORB]))
+	tools.add_child(_tool_group("Place Objectives", [Tool.SPAWN, Tool.CHECKPOINT]))
+	tools.add_child(_tool_group("Modify Terrain", [Tool.SELECT, Tool.ERASE]))
 	counts = RichTextLabel.new()
 	counts.bbcode_enabled = true
 	counts.fit_content = true
@@ -221,17 +261,28 @@ func _build_ui() -> void:
 	checkpoint_properties.add_theme_constant_override("separation", 14)
 	rows.add_child(checkpoint_properties)
 	var checkpoint_label := Label.new()
-	checkpoint_label.text = "Selected hoop · number"
+	checkpoint_label.text = "Selected Checkpoint"
 	checkpoint_properties.add_child(checkpoint_label)
-	checkpoint_order = SpinBox.new()
-	checkpoint_order.min_value = 2
-	checkpoint_order.max_value = 129
-	checkpoint_order.value_changed.connect(_change_checkpoint_number)
-	checkpoint_properties.add_child(checkpoint_order)
-	checkpoint_finish = CheckButton.new()
-	checkpoint_finish.text = "Finish checkpoint"
-	checkpoint_finish.tooltip_text = "The finish moves to the end of the route. Clear this to finish at spawn and enable laps."
-	checkpoint_finish.toggled.connect(_change_checkpoint_finish)
+	var number_controls := HBoxContainer.new()
+	number_controls.add_theme_constant_override("separation", 4)
+	checkpoint_properties.add_child(number_controls)
+	var number_panel := PanelContainer.new()
+	number_panel.custom_minimum_size = Vector2(48, 44)
+	number_controls.add_child(number_panel)
+	checkpoint_order = Label.new()
+	checkpoint_order.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	checkpoint_order.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	checkpoint_order.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	checkpoint_order.add_theme_font_size_override("font_size", 20)
+	number_panel.add_child(checkpoint_order)
+	var arrows := VBoxContainer.new()
+	arrows.add_theme_constant_override("separation", 2)
+	number_controls.add_child(arrows)
+	checkpoint_order_up = _checkpoint_arrow(1)
+	checkpoint_order_down = _checkpoint_arrow(-1)
+	arrows.add_child(checkpoint_order_up)
+	arrows.add_child(checkpoint_order_down)
+	checkpoint_finish = _button("Set Finish Checkpoint", _toggle_checkpoint_finish)
 	checkpoint_properties.add_child(checkpoint_finish)
 	var bottom := MenuPanel.new()
 	bottom_panel = bottom
@@ -282,6 +333,29 @@ func _build_ui() -> void:
 	for button in [clear_dialog.get_ok_button(), clear_dialog.get_cancel_button()]:
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
+func _checkpoint_arrow(direction: int) -> Button:
+	var button := CheckpointOrderArrow.new()
+	button.direction = direction
+	button.custom_minimum_size = Vector2(34, 22)
+	button.focus_mode = Control.FOCUS_NONE
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.tooltip_text = "Increase checkpoint number" if direction > 0 else "Decrease checkpoint number"
+	button.pressed.connect(_step_checkpoint_number.bind(direction))
+	return button
+
+func _step_checkpoint_number(step: int) -> void:
+	if selection.get("kind", "") != "checkpoint":
+		return
+	var number := int(selection["index"]) + 2
+	var maximum := document.checkpoints.size() + (0 if document.finish_checkpoint > 1 else 1)
+	if document.finish_checkpoint == number or number + step < 2 or number + step > maximum:
+		return
+	_change_checkpoint_number(number + step)
+
+func _toggle_checkpoint_finish() -> void:
+	if selection.get("kind", "") == "checkpoint":
+		_change_checkpoint_finish(document.finish_checkpoint != int(selection["index"]) + 2)
+
 func _build_race_dialog() -> void:
 	race_dialog = ConfirmationDialog.new()
 	race_dialog.title = "Race settings"
@@ -307,9 +381,9 @@ func _open_race_settings() -> void:
 	_cancel_action()
 	race_laps.value = document.race_laps
 	race_laps.editable = document.finish_checkpoint == 1
-	race_explanation.text = "Spawn is checkpoint 1. Pass each numbered hoop, then return to spawn to finish a lap. Select a hoop to change its number or set a separate finish."
+	race_explanation.text = "Spawn is checkpoint 1. Pass each numbered hoop, then return to spawn to finish a lap. Select a checkpoint to change its number or set a separate finish."
 	if document.finish_checkpoint > 1:
-		race_explanation.text = "Checkpoint %d is the finish. Pass every hoop in order to finish the race. To enable laps, select the finish hoop and clear Finish checkpoint." % document.finish_checkpoint
+		race_explanation.text = "Checkpoint %d is the finish. Pass every hoop in order to finish the race. To enable laps, select the finish checkpoint and click Unset Finish Checkpoint." % document.finish_checkpoint
 	race_dialog.popup_centered(Vector2i(480, 0))
 	_fit_race_dialog.call_deferred()
 
@@ -333,12 +407,11 @@ func _refresh_checkpoint_properties() -> void:
 		return
 	var number := int(selection["index"]) + 2
 	var finish := document.finish_checkpoint == number
-	checkpoint_order.set_block_signals(true)
-	checkpoint_order.max_value = document.checkpoints.size() + (0 if document.finish_checkpoint > 1 and not finish else 1)
-	checkpoint_order.set_value_no_signal(number)
-	checkpoint_order.set_block_signals(false)
-	checkpoint_order.editable = not finish
-	checkpoint_finish.set_pressed_no_signal(finish)
+	var maximum := document.checkpoints.size() + (0 if document.finish_checkpoint > 1 else 1)
+	checkpoint_order.text = str(number)
+	checkpoint_order_up.disabled = finish or number >= maximum
+	checkpoint_order_down.disabled = finish or number <= 2
+	checkpoint_finish.text = "Unset Finish Checkpoint" if finish else "Set Finish Checkpoint"
 
 func _change_checkpoint_number(value: float) -> void:
 	if selection.get("kind", "") != "checkpoint":

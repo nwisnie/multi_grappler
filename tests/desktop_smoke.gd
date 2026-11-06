@@ -20,12 +20,14 @@ func _run() -> void:
 	var shell = load("res://scenes/game_shell.tscn").instantiate()
 	root.add_child(shell)
 	await capture("title")
-	shell.show_join_menu()
+	shell.title_screen.multiplayer_button.pressed.emit()
+	await capture("multiplayer")
+	shell.title_screen.join_button.pressed.emit()
 	await process_frame
 	await process_frame
 	await capture("join")
 	shell.join_dialog.hide()
-	shell.show_host_menu()
+	shell.title_screen.host_button.pressed.emit()
 	await process_frame
 	await process_frame
 	await capture("host")

@@ -18,10 +18,14 @@ const WAVE_SPEED := 2.4
 
 var tutorial_button: Button
 var editor_button: Button
+var multiplayer_button: Button
 var join_button: Button
 var host_button: Button
+var multiplayer_back_button: Button
 var settings_button: Button
 var fullscreen_button: Button
+var main_actions: VBoxContainer
+var multiplayer_actions: VBoxContainer
 var wave_items: Array[Control] = []
 var wave_time := 0.0
 
@@ -83,19 +87,43 @@ func _ready() -> void:
 		slot.add_child(letter)
 		wave_items.append(letter)
 	# No enclosing panel: the options sit directly on the sky background.
-	var actions := VBoxContainer.new()
-	actions.add_theme_constant_override("separation", 12)
-	column.add_child(actions)
+	main_actions = VBoxContainer.new()
+	main_actions.name = "MainActions"
+	main_actions.add_theme_constant_override("separation", 12)
+	column.add_child(main_actions)
+	multiplayer_button = _button("Multiplayer", show_multiplayer_options)
 	tutorial_button = _button("Tutorial", func() -> void: tutorial_requested.emit())
 	editor_button = _button("Level Editor", func() -> void: editor_requested.emit())
+	settings_button = _button("Settings", func() -> void: settings_requested.emit())
+	for button in [multiplayer_button, editor_button, tutorial_button, settings_button]:
+		main_actions.add_child(button)
+	multiplayer_actions = VBoxContainer.new()
+	multiplayer_actions.name = "MultiplayerActions"
+	multiplayer_actions.add_theme_constant_override("separation", 12)
+	column.add_child(multiplayer_actions)
 	join_button = _button("Join Game", func() -> void: join_requested.emit())
 	host_button = _button("Host Game", func() -> void: host_requested.emit())
-	settings_button = _button("Settings", func() -> void: settings_requested.emit())
+	multiplayer_back_button = _button("Back", show_main_options)
+	for button in [join_button, host_button, multiplayer_back_button]:
+		multiplayer_actions.add_child(button)
 	fullscreen_button = _button("Fullscreen", func() -> void: fullscreen_requested.emit())
-	for button in [tutorial_button, editor_button, join_button, host_button, settings_button, fullscreen_button]:
-		actions.add_child(button)
-	tutorial_button.grab_focus.call_deferred()
+	fullscreen_button.name = "FullscreenButton"
+	fullscreen_button.custom_minimum_size = Vector2(240, 44)
+	fullscreen_button.add_theme_font_size_override("font_size", 20)
+	fullscreen_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	main_actions.add_child(fullscreen_button)
+	show_main_options()
 	_update_wave()
+
+func show_main_options() -> void:
+	main_actions.show()
+	multiplayer_actions.hide()
+	multiplayer_button.grab_focus.call_deferred()
+
+func show_multiplayer_options() -> void:
+	main_actions.hide()
+	multiplayer_actions.show()
+	join_button.grab_focus.call_deferred()
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():

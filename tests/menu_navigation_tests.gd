@@ -25,6 +25,8 @@ func _run() -> void:
 	await process_frame
 	check(shell.title_screen.visible and shell.world == null, "Start on title, without running tutorial")
 	check(shell.title_screen.tutorial_button.text == "Tutorial" and shell.title_screen.editor_button.text == "Level Editor", "Title has tutorial and editor routes")
+	check(shell.title_screen.multiplayer_button.has_focus() and shell.title_screen.main_actions.visible and not shell.title_screen.multiplayer_actions.visible, "Title starts with Multiplayer selected on the main menu")
+	check(shell.title_screen.multiplayer_button.get_index() < shell.title_screen.editor_button.get_index() and shell.title_screen.editor_button.get_index() < shell.title_screen.tutorial_button.get_index(), "Main menu order is Multiplayer, Level Editor, Tutorial")
 	check(shell.title_screen.settings_button.text == "Settings" and shell.title_screen.fullscreen_button.text == "Fullscreen", "Title has settings and fullscreen controls")
 	for button in [shell.title_screen.settings_button, shell.title_screen.fullscreen_button]:
 		check(root.get_visible_rect().encloses(button.get_global_rect()), "New title buttons fit inside the viewport")
@@ -55,17 +57,17 @@ func _run() -> void:
 		await process_frame
 		await process_frame
 	# Real GUI pointer/key events must share a persistent selection.
-	shell.title_screen.tutorial_button.grab_focus()
+	shell.title_screen.multiplayer_button.grab_focus()
 	var pointer := InputEventMouseMotion.new()
-	pointer.position = shell.title_screen.host_button.get_global_rect().get_center()
+	pointer.position = shell.title_screen.tutorial_button.get_global_rect().get_center()
 	root.push_input(pointer, true)
 	await process_frame
-	check(shell.title_screen.host_button.has_focus(), "Hover replaces previous keyboard selection")
+	check(shell.title_screen.tutorial_button.has_focus(), "Hover replaces previous keyboard selection")
 	pointer = InputEventMouseMotion.new()
 	pointer.position = Vector2(10, 10)
 	root.push_input(pointer, true)
 	await process_frame
-	check(shell.title_screen.host_button.has_focus(), "Mouse selection persists after leaving a button")
+	check(shell.title_screen.tutorial_button.has_focus(), "Mouse selection persists after leaving a button")
 	var arrow := InputEventKey.new()
 	arrow.keycode = KEY_UP
 	arrow.pressed = true
@@ -75,7 +77,7 @@ func _run() -> void:
 	arrow.pressed = false
 	root.push_input(arrow, true)
 	await process_frame
-	check(shell.title_screen.join_button.has_focus(), "Arrow navigation continues from last mouse selection")
+	check(shell.title_screen.editor_button.has_focus(), "Arrow navigation continues from last mouse selection")
 	pointer = InputEventMouseMotion.new()
 	pointer.position = shell.title_screen.editor_button.get_global_rect().get_center()
 	root.push_input(pointer, true)
@@ -85,6 +87,20 @@ func _run() -> void:
 	root.push_input(pointer, true)
 	await process_frame
 	check(shell.title_screen.editor_button.has_focus(), "New hover selection does not revert to arrow selection")
+	shell.title_screen.multiplayer_button.pressed.emit()
+	await process_frame
+	await process_frame
+	check(shell.title_screen.multiplayer_actions.visible and not shell.title_screen.main_actions.visible and shell.title_screen.join_button.has_focus(), "Multiplayer opens Join Game and Host Game with keyboard focus")
+	shell.title_screen.multiplayer_back_button.pressed.emit()
+	await process_frame
+	await process_frame
+	check(shell.title_screen.main_actions.visible and shell.title_screen.multiplayer_button.has_focus(), "Back from Multiplayer restores the main menu and focus")
+	shell.title_screen.multiplayer_button.pressed.emit()
+	key(shell, KEY_ESCAPE)
+	check(shell.title_screen.main_actions.visible and not shell.title_screen.multiplayer_actions.visible, "Escape exits the Multiplayer submenu")
+	shell.title_screen.multiplayer_button.pressed.emit()
+	await process_frame
+	await process_frame
 	shell.title_screen.join_button.pressed.emit()
 	check(shell.join_dialog.visible and shell.join_dialog.exclusive and shell.dimmer.visible, "Join opens modal popup")
 	for invalid in ["", "1234567", "123456789", "abcdefgh", "+1234567", "1234 678"]:
@@ -98,13 +114,19 @@ func _run() -> void:
 	check(shell.world == null and shell.join_message.text.contains("ws://"), "Invalid signaling URLs report an actionable error")
 	shell.join_dialog.hide()
 	shell.join_dialog.canceled.emit()
-	check(not shell.dimmer.visible, "Closing title popup removes dimmer")
+	check(not shell.dimmer.visible and shell.title_screen.multiplayer_actions.visible, "Closing Join returns to the Multiplayer choices")
+	shell._show_network_loading("Connecting...", shell.join_dialog)
+	key(shell, KEY_ESCAPE)
+	check(not shell.loading_screen.visible and shell.title_screen.main_actions.visible, "Escape during connection loading cancels the connection before navigating the submenu")
+	shell.title_screen.multiplayer_button.pressed.emit()
 	shell.title_screen.host_button.pressed.emit()
 	check(shell.host_dialog.visible and shell.host_player_limit.value == 4, "Host has initial setup form")
 	check(not shell.host_dialog.get_ok_button().disabled, "Room creation is enabled")
 	shell._submit_host()
 	check(shell.host_message.text.contains("MG1-"), "Hosting requires a valid editor level code")
 	shell.host_dialog.hide()
+	shell.host_dialog.canceled.emit()
+	shell.title_screen.multiplayer_back_button.pressed.emit()
 	shell.title_screen.tutorial_button.pressed.emit()
 	await physics_frame
 	check(shell.world != null and not shell.title_screen.visible, "Tutorial opens base level")
@@ -146,6 +168,7 @@ func _run() -> void:
 	check(not shell._player().controls_locked, "Controls resume once held key is released")
 	shell.show_main_menu()
 	check(not paused and shell.world == null and shell.title_screen.visible, "Return to main menu clears pause and disposes world")
+	check(shell.title_screen.main_actions.visible and not shell.title_screen.multiplayer_actions.visible, "Returning from gameplay resets the Multiplayer submenu")
 	shell.title_screen.editor_button.pressed.emit()
 	await process_frame
 	await process_frame

@@ -5,6 +5,7 @@ extends Button
 enum Segment { SINGLE, FIRST, MIDDLE, LAST }
 const SLANT := 6.0
 const GAP := 4.0
+const BORDER_WIDTH := 1.3
 
 class Face extends Control:
 	var button: EditorToolbarButton
@@ -101,8 +102,8 @@ func _polygon(inset: float) -> PackedVector2Array:
 		var trim := minf(radius, minf(point.distance_to(previous), point.distance_to(next)) * 0.4)
 		var start := point.move_toward(previous, trim)
 		var end := point.move_toward(next, trim)
-		for step in range(6):
-			var t := float(step) / 5.0
+		for step in range(8):
+			var t := float(step) / 7.0
 			result.append(start * (1.0 - t) * (1.0 - t) + point * 2.0 * t * (1.0 - t) + end * t * t)
 	return result
 
@@ -113,5 +114,8 @@ func _has_point(point: Vector2) -> bool:
 func draw_face(canvas: Control) -> void:
 	var selected := not disabled and (is_hovered() or has_focus() or button_pressed)
 	var amount := 0.12 if selected else 0.0
-	canvas.draw_colored_polygon(_polygon(0.0), _border.lightened(amount * 0.8))
-	canvas.draw_colored_polygon(_polygon(1.3), _background.lightened(amount))
+	# Cover the fill's hard edge with a smooth stroke on both sides of the border.
+	var outline := _polygon(BORDER_WIDTH * 0.5)
+	canvas.draw_colored_polygon(outline, _background.lightened(amount))
+	outline.append(outline[0])
+	canvas.draw_polyline(outline, _border.lightened(amount * 0.8), BORDER_WIDTH, true)
