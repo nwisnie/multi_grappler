@@ -51,8 +51,15 @@ static func default_url() -> String:
 			return PUBLIC_URL
 	return configured
 
-func host_game(url: String, level_code: String, limit: int, game_name: String) -> void:
-	_begin(url, {"type": "create", "level_code": level_code, "max_players": limit, "name": game_name}, true)
+static func lobby_list_url(url: String) -> String:
+	if url.begins_with("wss://"):
+		return "https://" + url.substr(6).trim_suffix("/") + "/lobbies"
+	if url.begins_with("ws://"):
+		return "http://" + url.substr(5).trim_suffix("/") + "/lobbies"
+	return ""
+
+func host_game(url: String, level_code: String, limit: int, game_name: String, is_public: bool = false) -> void:
+	_begin(url, {"type": "create", "level_code": level_code, "max_players": limit, "name": game_name, "public": is_public}, true)
 
 func join_game(url: String, code: String) -> void:
 	_begin(url, {"type": "join", "room": code}, false)

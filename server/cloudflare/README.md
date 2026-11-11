@@ -3,7 +3,9 @@
 This replaces the publicly hosted Node service. Keep the browser game on GitHub Pages;
 no always-on PC, Node process, or Cloudflare Tunnel is needed for the public backend.
 Anyone visiting the game can host a 2–8 player room and share its eight-digit code.
-Room browsing is not included; joining still uses a code.
+Host Game defaults to **Private** (code only). Choosing **Public** also lists the room
+in Join Game, where players can see its name and player count and click to join.
+Both kinds of room still accept the eight-digit code.
 
 ## Deploy from your computer
 
@@ -37,7 +39,9 @@ Object namespace, and the custom domain **rooms.wizkinews.com**. Cloudflare mana
 and HTTPS for the custom domain; you do not need to point an A record at a server.
 If `rooms` already has a DNS record or Tunnel route, remove that conflicting `rooms`
 configuration first. Leave the GitHub Pages records for the main website as they are.
-The first migration (`v1`) creates the namespace; keep it in the config for future deploys.
+The first migration (`v1`) creates the room namespace; `v2` adds the public lobby
+directory. Keep both migrations in the config for future deploys. Existing clients
+that omit visibility continue to create private rooms.
 
 Open `https://rooms.wizkinews.com/health`; it should show `ok`. This checks that the
 Worker is reachable, not that TURN credentials are valid. An actual Host/Join verifies
@@ -107,6 +111,27 @@ The Worker allocates a cryptographically random code and atomically reserves it 
 code's object. Joins connect to `/rooms/12345678`, routing directly to the same object.
 The Godot create/join/signal messages otherwise match the local Node protocol. Only the
 host negotiates with guests; clients cannot supply their own sender IDs.
+
+`GET /lobbies` returns public names, room codes, player counts, and limits. It never
+includes private rooms, level codes, signaling data, or TURN credentials. The directory
+uses four SQLite-backed Durable Object shards; gameplay and room ownership remain in
+the individual room objects. The browser loads up to 100 public lobbies when opened
+and on Refresh, without continuous polling. Full rooms remain visible but cannot be
+selected. The code field remains available if browsing fails. Allowed browser origins
+also apply to the HTTP directory; desktop requests without an Origin header can browse.
+
+Public directory entries update when slots are reserved or released, on room creation,
+and during the room's existing cleanup alarm. They expire with the host heartbeat lease
+or the room TTL, whichever comes first. Host exit removes the entry; abrupt disconnects
+can remain visible until the existing three-minute heartbeat timeout. A stale click is
+still checked against the real room's capacity and lifetime before joining. Directory
+reads and public metadata updates add small Durable Object request/storage usage;
+listing uses the existing connection rate-limit allowance. Logs and traces are sampled
+at 10% and 1%, respectively. No application logs include level or credential payloads.
+
+To roll out lobby visibility, deploy this Worker (including its `v2` migration), then
+re-export/upload the Godot Web game. Changing the game alone does not update the live
+room service. No D1 database or new credentials are needed for the lobby directory.
 
 Room metadata lives in SQLite-backed storage; peer IDs and setup/rate state are attached
 to hibernating WebSockets. They survive object eviction without keeping the object awake.

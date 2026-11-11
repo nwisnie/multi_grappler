@@ -20,6 +20,21 @@ function createSignalingServer(options = {}) {
   const origins = options.allowedOrigins || (process.env.ALLOWED_ORIGINS || "").split(",").filter(Boolean);
   const getIceServers = options.getIceServers || cloudflareIceServers;
   const server = http.createServer((req, res) => {
+    if (req.url === "/lobbies") {
+      const origin = req.headers.origin;
+      if (origin && origins.length && !origins.includes(origin)) {
+        res.writeHead(403); return res.end("Origin not allowed\n");
+      }
+      const headers = { "Content-Type": "application/json", "Cache-Control": "no-store", "Access-Control-Allow-Origin": origin || "*", Vary: "Origin" };
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, { ...headers, "Access-Control-Allow-Methods": "GET, OPTIONS" }); return res.end();
+      }
+      if (req.method !== "GET") { res.writeHead(405, headers); return res.end(JSON.stringify({ error: "Use GET." })); }
+      const visible = [...rooms.values()].filter(room => room.public && room.peers.get(1)?.readyState === WebSocket.OPEN)
+        .sort((a, b) => b.createdAt - a.createdAt).slice(0, 100)
+        .map(room => ({ room: room.code, name: room.name, players: room.peers.size, max_players: room.limit }));
+      res.writeHead(200, headers); return res.end(JSON.stringify({ rooms: visible }));
+    }
     res.writeHead(req.url === "/health" ? 200 : 404, { "Content-Type": "text/plain" });
     res.end(req.url === "/health" ? "ok\n" : "not found\n");
   });
@@ -79,12 +94,14 @@ function createSignalingServer(options = {}) {
               return error(ws, "Provide a valid MG1- level code.");
             }
             if (!Number.isInteger(message.max_players) || message.max_players < 2 || message.max_players > 8) return error(ws, "Player limit must be 2-8.");
+            if (message.public !== undefined && typeof message.public !== "boolean") return error(ws, "Choose public or private lobby visibility.");
             if (rooms.size >= (options.maxRooms || 1000)) return error(ws, "Room service is full. Try again later.");
             const iceServers = await getIceServers();
             if (ws.readyState !== WebSocket.OPEN) return;
             let code;
             do { code = (options.randomCode ? options.randomCode() : randomInt(100000000)).toString().padStart(8, "0"); } while (rooms.has(code));
-            room = { code, levelCode: message.level_code, limit: message.max_players, nextId: 2, peers: new Map() };
+            const name = typeof message.name === "string" ? message.name.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 32) : "";
+            room = { code, name: name || "My game", public: message.public === true, createdAt: Date.now(), levelCode: message.level_code, limit: message.max_players, nextId: 2, peers: new Map() };
             ws.peerId = 1;
             ws.room = room;
             room.peers.set(1, ws);

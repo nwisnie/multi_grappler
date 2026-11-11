@@ -7,7 +7,8 @@ const ORIGIN = "https://wizkinews.com";
 const source = readFileSync(new URL("../src/worker.js", import.meta.url), "utf8");
 // Inspection and clock controls exist only in this local test entry point.
 const harness = `
-  import { GameRoom } from './worker.js';
+  import { GameRoom, LobbyDirectory } from './worker.js';
+  export { LobbyDirectory };
   import worker from './worker.js';
   export default {
     async fetch(request, env) {
@@ -40,7 +41,7 @@ function runtime(t, options = {}) {
         { type: "ESModule", path: "worker.js", contents: source },
       ],
       bindings: { ALLOWED_ORIGINS: ORIGIN, ...options.bindings },
-      durableObjects: { ROOMS: { className: "TestRoom", useSQLite: true } },
+      durableObjects: { ROOMS: { className: "TestRoom", useSQLite: true }, LOBBIES: { className: "LobbyDirectory", useSQLite: true } },
       ratelimits: {
         CREATE_LIMITER: { namespace_id: "271001", simple: { limit: options.createLimit || 1000, period: 60 } },
         CONNECT_LIMITER: { namespace_id: "271002", simple: { limit: 1000, period: 60 } },
@@ -72,9 +73,9 @@ async function client(mf, path = "/") {
   return ws;
 }
 
-async function host(mf, limit = 3) {
+async function host(mf, limit = 3, isPublic = false, name = "My game") {
   const ws = await client(mf);
-  ws.sendJSON({ type: "create", level_code: "MG1-AAAA", max_players: limit });
+  ws.sendJSON({ type: "create", level_code: "MG1-AAAA", max_players: limit, public: isPublic, name });
   const created = await ws.next("created");
   assert.match(created.room, /^\d{8}$/);
   assert.equal(created.peer_id, 1);
@@ -95,7 +96,7 @@ async function object(mf, room) {
   return { snapshot: () => call("snapshot"), expire: () => call("expire"), expireHost: () => call("expireHost") };
 }
 
-test("independent public rooms, capacity, authority, hibernation, departures and storage cleanup", async t => {
+test("independent rooms, capacity, authority, hibernation, departures and storage cleanup", async t => {
   const mf = runtime(t);
   const first = await host(mf);
   const second = await host(mf);
@@ -189,7 +190,7 @@ test("credential failure releases a slot and host exit during credential fetch c
       return Response.json({ iceServers: [{ urls: ["stun:example.test"] }] });
     },
   });
-  const first = await host(mf, 2);
+  const first = await host(mf, 2, true);
   const failed = await client(mf, "/rooms/" + first.room);
   failed.sendJSON({ type: "join", room: first.room });
   assert.match((await failed.next("error")).message, /credentials/);
@@ -199,6 +200,56 @@ test("credential failure releases a slot and host exit during credential fetch c
   await waiting.next("room_closed");
   release();
   assert.equal((await (await object(mf, first.room)).snapshot()).stored, null);
+  assert.deepEqual((await (await mf.dispatchFetch("https://rooms.example/lobbies")).json()).rooms, []);
+});
+
+test("public directory excludes private rooms, survives eviction and follows capacity and room lifetime", async t => {
+  const mf = runtime(t);
+  const list = async () => {
+    const response = await mf.dispatchFetch("https://rooms.example/lobbies", { headers: { Origin: ORIGIN } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Access-Control-Allow-Origin"), ORIGIN);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    return (await response.json()).rooms;
+  };
+  const privateRoom = await host(mf, 3, false, "Secret");
+  assert.deepEqual(await list(), []);
+  const byCode = await join(mf, privateRoom.room);
+  assert.equal(byCode.joined.room, privateRoom.room);
+  assert.deepEqual(await list(), []);
+  const publicRoom = await host(mf, 2, true, "  Public\ngame  ");
+  assert.deepEqual(await list(), [{ room: publicRoom.room, name: "Public game", players: 1, max_players: 2 }]);
+  assert.equal(JSON.stringify(await list()).includes("level_code"), false);
+  try {
+    await mf.unsafeEvictDurableObject("test", "LobbyDirectory", { name: "public-" + (Number(publicRoom.room) % 4) });
+  } catch (error) {
+    if (!error.message.includes("it is not currently running")) throw error;
+  }
+  assert.equal((await list())[0].room, publicRoom.room);
+  const guest = await join(mf, publicRoom.room);
+  await publicRoom.ws.next("peer_joined");
+  assert.equal((await list())[0].players, 2);
+  guest.ws.close();
+  await publicRoom.ws.next("peer_left");
+  // The directory update follows the host notification in the same handler.
+  for (let attempt = 0; attempt < 20 && (await list())[0]?.players !== 1; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal((await list())[0].players, 1);
+  await (await object(mf, publicRoom.room)).expireHost();
+  assert.deepEqual(await list(), []);
+  assert.equal((await (await object(mf, privateRoom.room)).snapshot()).room.code, privateRoom.room);
+  assert.equal((await mf.dispatchFetch("https://rooms.example/lobbies", { headers: { Origin: "https://evil.example" } })).status, 403);
+  assert.equal((await mf.dispatchFetch("https://rooms.example/lobbies", { method: "OPTIONS", headers: { Origin: ORIGIN } })).status, 204);
+});
+
+test("room creation defaults to private and rejects non-boolean visibility", async t => {
+  const mf = runtime(t);
+  const ws = await client(mf);
+  ws.sendJSON({ type: "create", level_code: "MG1-AAAA", max_players: 2, public: "true" });
+  assert.match((await ws.next("error")).message, /visibility/);
+  ws.sendJSON({ type: "create", level_code: "MG1-AAAA", max_players: 2 });
+  const created = await ws.next("created");
+  assert.equal((await (await object(mf, created.room)).snapshot()).stored.public, false);
+  assert.deepEqual((await (await mf.dispatchFetch("https://rooms.example/lobbies")).json()).rooms, []);
 });
 
 test("origins, anonymous creation limits, malformed signaling, stale hosts and room expiration", async t => {

@@ -22,10 +22,15 @@ var dimmer: ColorRect
 var join_dialog: ConfirmationDialog
 var room_code: LineEdit
 var join_message: Label
+var public_lobbies: VBoxContainer
+var public_lobby_status: Label
+var refresh_lobbies_button: Button
+var lobby_request: HTTPRequest
 var pending_room_code := ""
 var host_dialog: ConfirmationDialog
 var host_name: LineEdit
 var host_player_limit: SpinBox
+var host_visibility: Button
 var host_level_code: TextEdit
 var host_message: Label
 var session: SessionScript
@@ -278,7 +283,36 @@ func _build_join_menu() -> void:
 	join_dialog.confirmed.connect(_submit_join)
 	join_dialog.canceled.connect(_cancel_connection)
 	var column := _column(join_dialog)
-	column.add_child(_label("Enter the 8-digit room code from your host."))
+	var heading := HBoxContainer.new()
+	column.add_child(heading)
+	var caption := Label.new()
+	caption.text = "Public lobbies"
+	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading.add_child(caption)
+	refresh_lobbies_button = _button("Refresh", _refresh_public_lobbies)
+	heading.add_child(refresh_lobbies_button)
+	var lobby_panel := PanelContainer.new()
+	column.add_child(lobby_panel)
+	var lobby_column := VBoxContainer.new()
+	lobby_column.add_theme_constant_override("separation", 8)
+	lobby_panel.add_child(lobby_column)
+	public_lobby_status = _label("No public lobbies loaded yet.")
+	public_lobby_status.custom_minimum_size.x = 0
+	public_lobby_status.add_theme_font_size_override("font_size", 14)
+	lobby_column.add_child(public_lobby_status)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size.y = 164
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	lobby_column.add_child(scroll)
+	public_lobbies = VBoxContainer.new()
+	public_lobbies.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(public_lobbies)
+	lobby_request = HTTPRequest.new()
+	lobby_request.timeout = 10.0
+	lobby_request.body_size_limit = 65536
+	lobby_request.request_completed.connect(_public_lobbies_received)
+	add_child(lobby_request)
+	column.add_child(_label("Or join with an 8-digit room code."))
 	room_code = LineEdit.new()
 	room_code.placeholder_text = "00000000"
 	room_code.max_length = 8
@@ -291,6 +325,59 @@ func _build_join_menu() -> void:
 	column.add_child(room_code)
 	join_message = _label("")
 	column.add_child(join_message)
+
+func _cancel_lobby_refresh() -> void:
+	lobby_request.cancel_request()
+	refresh_lobbies_button.disabled = false
+
+func _refresh_public_lobbies() -> void:
+	_cancel_lobby_refresh()
+	public_lobby_status.text = "Finding public lobbies..."
+	refresh_lobbies_button.disabled = true
+	_clear_public_lobbies()
+	var url := SessionScript.lobby_list_url(SessionScript.default_url())
+	if url.is_empty() or lobby_request.request(url) != OK:
+		refresh_lobbies_button.disabled = false
+		public_lobby_status.text = "Could not load public lobbies. You can still join by code."
+
+func _clear_public_lobbies() -> void:
+	for child in public_lobbies.get_children():
+		public_lobbies.remove_child(child)
+		child.queue_free()
+
+func _public_lobbies_received(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	refresh_lobbies_button.disabled = false
+	if not join_dialog.visible:
+		return
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		public_lobby_status.text = "Could not load public lobbies. You can still join by code."
+		return
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if not payload is Dictionary or not payload.get("rooms") is Array:
+		public_lobby_status.text = "Could not load public lobbies. You can still join by code."
+		return
+	_clear_public_lobbies()
+	for entry in payload["rooms"].slice(0, 100):
+		if not entry is Dictionary or not valid_room_code(str(entry.get("room", ""))):
+			continue
+		if typeof(entry.get("players")) not in [TYPE_INT, TYPE_FLOAT] or typeof(entry.get("max_players")) not in [TYPE_INT, TYPE_FLOAT]:
+			continue
+		var count := int(entry.get("players", 0))
+		var limit := int(entry.get("max_players", 0))
+		if count < 1 or limit < 2 or limit > 8 or count > limit:
+			continue
+		var code := str(entry["room"])
+		var game_name := str(entry.get("name", "My game")).replace("\n", " ").replace("\r", " ").left(32)
+		var button := _button("%s · %d/%d%s" % [game_name, count, limit, " · Full" if count == limit else ""], _join_public_lobby.bind(code))
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.clip_text = true
+		button.disabled = count == limit
+		public_lobbies.add_child(button)
+	public_lobby_status.text = "%d public lobbies · select one to join" % public_lobbies.get_child_count() if public_lobbies.get_child_count() > 0 else "No public lobbies yet. Host one or join by code."
+
+func _join_public_lobby(code: String) -> void:
+	room_code.text = code
+	_submit_join()
 
 static func valid_room_code(text: String) -> bool:
 	if text.length() != 8:
@@ -311,6 +398,7 @@ func _submit_join() -> void:
 		return
 	pending_room_code = room_code.text
 	join_dialog.get_ok_button().disabled = true
+	_cancel_lobby_refresh()
 	_show_network_loading("Finding the host...", join_dialog)
 	session.join_game(SessionScript.default_url(), pending_room_code)
 
@@ -321,6 +409,7 @@ func show_join_menu() -> void:
 	_validate_room_code("")
 	_popup(join_dialog)
 	room_code.grab_focus.call_deferred()
+	_refresh_public_lobbies()
 
 func _build_host_menu() -> void:
 	host_dialog = _dialog("Host Game", "Back")
@@ -330,13 +419,18 @@ func _build_host_menu() -> void:
 	host_dialog.confirmed.connect(_submit_host)
 	var column := _column(host_dialog)
 	column.add_theme_constant_override("separation", 8)
-	column.add_child(_label("Paste a level code from the editor, then share your room's 8-digit code. Leaving ends the session for everyone."))
+	column.add_child(_label("Host a level, then invite players with the room code. Leaving ends the game for everyone."))
 	column.add_child(_label("Game name"))
 	host_name = LineEdit.new()
 	host_name.text = "My game"
 	host_name.max_length = 32
 	host_name.add_theme_stylebox_override("normal", host_dialog.theme.get_stylebox("normal", "LineEdit"))
 	column.add_child(host_name)
+	column.add_child(_label("Lobby visibility"))
+	host_visibility = _button("Private (join by code only)", _update_host_visibility)
+	host_visibility.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	host_visibility.toggle_mode = true
+	column.add_child(host_visibility)
 	column.add_child(_label("Maximum players"))
 	host_player_limit = SpinBox.new()
 	host_player_limit.min_value = 2
@@ -352,6 +446,9 @@ func _build_host_menu() -> void:
 	host_message = _label("")
 	column.add_child(host_message)
 
+func _update_host_visibility() -> void:
+	host_visibility.text = "Public (anyone can join)" if host_visibility.button_pressed else "Private (join by code only)"
+
 func _submit_host() -> void:
 	var decoded := LevelCodec.decode_level(host_level_code.text)
 	if not decoded["error"].is_empty():
@@ -364,9 +461,10 @@ func _submit_host() -> void:
 		return
 	host_dialog.get_ok_button().disabled = true
 	_show_network_loading("Creating your room...", host_dialog)
-	session.host_game(SessionScript.default_url(), LevelCodec.encode_level(document), int(host_player_limit.value), host_name.text)
+	session.host_game(SessionScript.default_url(), LevelCodec.encode_level(document), int(host_player_limit.value), host_name.text, host_visibility.button_pressed)
 
 func _cancel_connection() -> void:
+	_cancel_lobby_refresh()
 	session.close()
 	dimmer.hide()
 	host_dialog.get_ok_button().disabled = false
@@ -495,6 +593,7 @@ func _close_settings() -> void:
 		title_screen.settings_button.grab_focus.call_deferred()
 
 func _clear_menus() -> void:
+	_cancel_lobby_refresh()
 	loading_screen.hide()
 	loading_origin = null
 	get_tree().paused = false

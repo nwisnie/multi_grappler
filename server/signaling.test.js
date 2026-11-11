@@ -21,8 +21,8 @@ test("optional env files load settings and preserve deployed environment overrid
   assert.doesNotThrow(() => loadConfiguration(path.join(directory, "missing.env")));
 });
 
-async function client(url) {
-  const ws = new WebSocket(url);
+async function client(url, options) {
+  const ws = new WebSocket(url, options);
   ws.inbox = [];
   ws.on("message", raw => ws.inbox.push(JSON.parse(raw)));
   await once(ws, "open");
@@ -118,4 +118,43 @@ test("Cloudflare generates expiring credentials on the backend", async t => {
   const servers = await cloudflareIceServers();
   assert.equal(servers[0].username, "temporary");
   assert.equal(JSON.stringify(servers).includes("test-token"), false);
+});
+
+test("public lobby list hides private games, reflects capacity and removes ended games", async t => {
+  let code = 123456;
+  const app = createSignalingServer({ getIceServers: async () => [], randomCode: () => code++, allowedOrigins: ["https://game.example"] });
+  await new Promise(resolve => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => app.close());
+  const url = `ws://127.0.0.1:${app.server.address().port}`;
+  // This test server restricts browser origins, so pass one for WebSocket clients.
+  const connect = () => client(url, { origin: "https://game.example" });
+  const listURL = url.replace("ws:", "http:") + "/lobbies";
+  const list = async () => (await (await fetch(listURL, { headers: { Origin: "https://game.example" } })).json()).rooms;
+  const privateHost = await connect();
+  privateHost.sendJSON({ type: "create", level_code: "MG1-AAAA", max_players: 2 });
+  const privateRoom = await privateHost.next("created");
+  assert.deepEqual(await list(), []);
+  const privateGuest = await connect();
+  privateGuest.sendJSON({ type: "join", room: privateRoom.room });
+  await privateGuest.next("joined");
+  assert.deepEqual(await list(), []);
+  const publicHost = await connect();
+  publicHost.sendJSON({ type: "create", level_code: "MG1-AAAA", max_players: 2, public: "true" });
+  assert.match((await publicHost.next("error")).message, /visibility/);
+  publicHost.sendJSON({ type: "create", level_code: "MG1-AAAA", max_players: 2, public: true, name: "  Public\ngame  " });
+  const publicRoom = await publicHost.next("created");
+  assert.deepEqual(await list(), [{ room: publicRoom.room, name: "Public game", players: 1, max_players: 2 }]);
+  const guest = await connect();
+  guest.sendJSON({ type: "join", room: publicRoom.room });
+  await guest.next("joined");
+  await publicHost.next("peer_joined");
+  assert.equal((await list())[0].players, 2);
+  guest.close();
+  await publicHost.next("peer_left");
+  assert.equal((await list())[0].players, 1);
+  publicHost.terminate();
+  for (let attempt = 0; attempt < 20 && (await list()).length; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(await list(), []);
+  assert.equal((await fetch(listURL, { headers: { Origin: "https://evil.example" } })).status, 403);
+  assert.equal((await fetch(listURL, { method: "OPTIONS", headers: { Origin: "https://game.example" } })).status, 204);
 });

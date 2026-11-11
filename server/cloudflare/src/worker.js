@@ -5,6 +5,7 @@ const PONG = '{"type":"pong"}';
 const SETUP_TIMEOUT = 30_000;
 const PEER_TIMEOUT = 180_000;
 const MAX_MESSAGE_BYTES = 32768;
+const DIRECTORY_SHARDS = 4;
 const NOT_FOUND = "Room not found. Check the code or ask the host to create a new game.";
 
 function text(body, status = 200) {
@@ -18,10 +19,32 @@ function randomCode() {
   return String(value % 100_000_000).padStart(8, "0");
 }
 
+function directory(env, code) {
+  return env.LOBBIES.getByName("public-" + (Number(code) % DIRECTORY_SHARDS));
+}
+
+async function publicLobbies(request, env) {
+  const origin = request.headers.get("Origin");
+  const allowed = (env.ALLOWED_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
+  if (origin && !allowed.includes(origin)) return text("Origin not allowed", 403);
+  const headers = { "Access-Control-Allow-Origin": origin || "*", Vary: "Origin", "Cache-Control": "no-store" };
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...headers, "Access-Control-Allow-Methods": "GET, OPTIONS" } });
+  if (request.method !== "GET") return Response.json({ error: "Use GET." }, { status: 405, headers });
+  const key = request.headers.get("CF-Connecting-IP") || "local";
+  if (!(await env.CONNECT_LIMITER.limit({ key })).success) return Response.json({ error: "Too many requests. Try again shortly." }, { status: 429, headers });
+  try {
+    const shards = await Promise.all(Array.from({ length: DIRECTORY_SHARDS }, (_, shard) => env.LOBBIES.getByName("public-" + shard).list()));
+    return Response.json({ rooms: shards.flat() }, { headers });
+  } catch {
+    return Response.json({ error: "Public lobbies are temporarily unavailable. You can still join by code." }, { status: 503, headers });
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") return text("ok");
+    if (url.pathname === "/lobbies") return publicLobbies(request, env);
     const match = /^\/rooms\/(\d{8})$/.exec(url.pathname);
     const creating = url.pathname === "/";
     if (!creating && !match) return text("not found", 404);
@@ -35,7 +58,7 @@ export default {
         (creating && !(await env.CREATE_LIMITER.limit({ key })).success)) return text("Too many attempts. Try again in a minute.", 429);
     try {
       // A successful upgrade reserves the code atomically in that code's object.
-      // No global room registry, always-on coordinator, or client-chosen host ID.
+      // Room ownership stays per-code; the public directory only holds metadata.
       for (let attempt = 0; attempt < 16; attempt++) {
         const code = creating ? randomCode() : match[1];
         const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
@@ -50,6 +73,37 @@ export default {
     }
   },
 };
+
+export class LobbyDirectory extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS public_lobbies (
+      code TEXT PRIMARY KEY, generation TEXT NOT NULL, revision INTEGER NOT NULL,
+      name TEXT NOT NULL, players INTEGER NOT NULL, max_players INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+    )`);
+    ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS lobby_expiration ON public_lobbies(expires_at)");
+  }
+
+  publish(entry) {
+    this.ctx.storage.sql.exec(`INSERT INTO public_lobbies VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(code) DO UPDATE SET generation=excluded.generation, revision=excluded.revision,
+      name=excluded.name, players=excluded.players, max_players=excluded.max_players,
+      expires_at=excluded.expires_at, created_at=excluded.created_at
+      WHERE excluded.created_at > public_lobbies.created_at OR
+      (public_lobbies.generation = excluded.generation AND excluded.revision >= public_lobbies.revision)`,
+      entry.code, entry.generation, entry.revision, entry.name, entry.players, entry.limit, entry.expiresAt, entry.createdAt);
+  }
+
+  remove(code, generation) {
+    this.ctx.storage.sql.exec("DELETE FROM public_lobbies WHERE code = ? AND generation = ?", code, generation);
+  }
+
+  list() {
+    this.ctx.storage.sql.exec("DELETE FROM public_lobbies WHERE expires_at <= ?", Date.now());
+    return this.ctx.storage.sql.exec("SELECT code AS room, name, players, max_players FROM public_lobbies ORDER BY code LIMIT 25").toArray();
+  }
+}
 
 export class GameRoom extends DurableObject {
   constructor(ctx, env) {
@@ -74,6 +128,24 @@ export class GameRoom extends DurableObject {
 
   error(ws, message) { this.send(ws, { type: "error", message }); }
 
+  async updateListing() {
+    if (!this.room?.public || this.room.phase !== "open") return;
+    const host = this.host();
+    if (!host) return;
+    const hostSeen = this.ctx.getWebSocketAutoResponseTimestamp(host)?.getTime() || host.deserializeAttachment().connectedAt;
+    const entry = {
+      code: this.room.code, generation: this.room.generation, createdAt: this.room.createdAt,
+      revision: (this.room.listingRevision || 0) + 1, name: this.room.name,
+      players: this.peers().length, limit: this.room.limit,
+      expiresAt: Math.min(this.room.expiresAt, hostSeen + PEER_TIMEOUT),
+    };
+    this.room.listingRevision = entry.revision;
+    await this.ctx.storage.put("room", this.room);
+    await directory(this.env, entry.code).publish(entry);
+    // A close can interleave with the directory RPC. Never revive that listing.
+    if (this.room?.generation !== entry.generation) await directory(this.env, entry.code).remove(entry.code, entry.generation);
+  }
+
   async fetch(request) {
     const [, role, code] = new URL(request.url).pathname.split("/");
     if (!/^\d{8}$/.test(code) || !["host", "join"].includes(role)) return text("not found", 404);
@@ -82,7 +154,7 @@ export class GameRoom extends DurableObject {
       if (this.room) return text("Code in use", 409);
       const ttl = Number(this.env.ROOM_TTL_SECONDS || 43200);
       if (!Number.isInteger(ttl) || ttl < 300 || ttl > 86400) return text("Invalid room TTL", 503);
-      this.room = { code, generation: crypto.randomUUID(), phase: "pending", nextId: 2, expiresAt: now + ttl * 1000 };
+      this.room = { code, generation: crypto.randomUUID(), createdAt: now, phase: "pending", nextId: 2, expiresAt: now + ttl * 1000 };
       await this.ctx.storage.put("room", this.room);
     }
     const pair = new WebSocketPair();
@@ -103,6 +175,7 @@ export class GameRoom extends DurableObject {
       await this.ctx.storage.put("room", this.room);
       const alarm = await this.ctx.storage.getAlarm();
       if (!alarm || alarm > now + SETUP_TIMEOUT) await this.ctx.storage.setAlarm(now + SETUP_TIMEOUT);
+      await this.updateListing();
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -128,6 +201,7 @@ export class GameRoom extends DurableObject {
           return this.error(ws, "Provide a valid MG1- level code.");
         }
         if (!Number.isInteger(message.max_players) || message.max_players < 2 || message.max_players > 8) return this.error(ws, "Player limit must be 2-8.");
+        if (message.public !== undefined && typeof message.public !== "boolean") return this.error(ws, "Choose public or private lobby visibility.");
       } else if (message.room !== this.room.code) return this.error(ws, NOT_FOUND);
       peer.busy = true;
       ws.serializeAttachment(peer);
@@ -146,8 +220,12 @@ export class GameRoom extends DurableObject {
           this.room.phase = "open";
           this.room.levelCode = message.level_code;
           this.room.limit = message.max_players;
+          this.room.public = message.public === true;
+          this.room.name = (typeof message.name === "string" ? message.name.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 32) : "") || "My game";
           await this.ctx.storage.put("room", this.room);
         }
+        await this.updateListing();
+        if (ws.readyState !== WebSocket.OPEN || this.room?.generation !== generation || ws.deserializeAttachment().left) return;
         this.send(ws, { type: creating ? "created" : "joined", room: this.room.code, peer_id: peer.peerId, level_code: this.room.levelCode, ice_servers: iceServers });
         if (!creating) this.send(this.host(), { type: "peer_joined", peer_id: peer.peerId });
       } catch {
@@ -181,11 +259,15 @@ export class GameRoom extends DurableObject {
     peer.left = true;
     ws.serializeAttachment(peer);
     if (peer.peerId === 1) await this.shutdown("Host left");
-    else if (peer.ready) this.send(this.host(), { type: "peer_left", peer_id: peer.peerId });
+    else {
+      if (peer.ready) this.send(this.host(), { type: "peer_left", peer_id: peer.peerId });
+      await this.updateListing();
+    }
   }
 
   async shutdown(reason) {
     const peers = this.peers();
+    const ended = this.room;
     this.room = null;
     for (const ws of peers) {
       const peer = ws.deserializeAttachment();
@@ -197,6 +279,7 @@ export class GameRoom extends DurableObject {
     // deleteAll does not delete an outstanding alarm.
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+    if (ended?.public) await directory(this.env, ended.code).remove(ended.code, ended.generation);
   }
 
   async webSocketClose(ws, code) {
@@ -224,6 +307,7 @@ export class GameRoom extends DurableObject {
         if (!this.room) return;
       } else next = Math.min(next, deadline);
     }
+    await this.updateListing();
     await this.ctx.storage.setAlarm(next);
   }
 }

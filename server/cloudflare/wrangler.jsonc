@@ -4,13 +4,24 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-10-27",
   "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  },
   "routes": [
     { "pattern": "rooms.wizkinews.com", "custom_domain": true }
   ],
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "GameRoom" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "GameRoom" },
+      { "name": "LOBBIES", "class_name": "LobbyDirectory" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["LobbyDirectory"] }
+  ],
   "vars": {
     "ALLOWED_ORIGINS": "https://wizkinews.com,https://www.wizkinews.com,http://localhost:8000,http://127.0.0.1:8000",
     "TURN_TTL_SECONDS": "86400",
