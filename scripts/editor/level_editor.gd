@@ -7,6 +7,7 @@ signal playtest_requested(document: LevelDocument)
 const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
 const ToolbarButtonScript := preload("res://scripts/editor/editor_toolbar_button.gd")
 const RaceCheckpoint := preload("res://scripts/levels/race_checkpoint.gd")
+const CHECKPOINT_MIN_SCREEN_RADIUS := 22.0
 
 enum Tool { SELECT, LINE, CURVE, SPAWN, ORB, CHECKPOINT, ERASE }
 const TOOL_NAMES := ["Select", "Line", "Curve", "Spawn", "Grapple orb", "Race checkpoint", "Erase"]
@@ -25,7 +26,7 @@ class Gizmos extends Node2D:
 	func _draw() -> void:
 		editor.draw_gizmos(self)
 
-class CheckpointOrderArrow extends EditorToolbarButton:
+class NumberArrow extends EditorToolbarButton:
 	var direction := 1
 	func draw_face(canvas: Control) -> void:
 		super.draw_face(canvas)
@@ -84,12 +85,19 @@ var clear_dialog: ConfirmationDialog
 var top_panel: PanelContainer
 var bottom_panel: PanelContainer
 var checkpoint_properties: HBoxContainer
+var checkpoint_label: Label
 var checkpoint_order: Label
 var checkpoint_order_up: Button
 var checkpoint_order_down: Button
 var checkpoint_finish: Button
 var race_dialog: ConfirmationDialog
-var race_laps: SpinBox
+var race_laps: Label
+var race_laps_up: Button
+var race_laps_down: Button
+var race_laps_reset: Button
+var race_unset_finish: Button
+var race_lap_count := 1
+var race_finish_at_spawn := true
 var race_explanation: Label
 
 func _ready() -> void:
@@ -260,28 +268,12 @@ func _build_ui() -> void:
 	checkpoint_properties = HBoxContainer.new()
 	checkpoint_properties.add_theme_constant_override("separation", 14)
 	rows.add_child(checkpoint_properties)
-	var checkpoint_label := Label.new()
-	checkpoint_label.text = "Selected Checkpoint"
+	checkpoint_label = Label.new()
 	checkpoint_properties.add_child(checkpoint_label)
-	var number_controls := HBoxContainer.new()
-	number_controls.add_theme_constant_override("separation", 4)
-	checkpoint_properties.add_child(number_controls)
-	var number_panel := PanelContainer.new()
-	number_panel.custom_minimum_size = Vector2(48, 44)
-	number_controls.add_child(number_panel)
 	checkpoint_order = Label.new()
-	checkpoint_order.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	checkpoint_order.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	checkpoint_order.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	checkpoint_order.add_theme_font_size_override("font_size", 20)
-	number_panel.add_child(checkpoint_order)
-	var arrows := VBoxContainer.new()
-	arrows.add_theme_constant_override("separation", 2)
-	number_controls.add_child(arrows)
-	checkpoint_order_up = _checkpoint_arrow(1)
-	checkpoint_order_down = _checkpoint_arrow(-1)
-	arrows.add_child(checkpoint_order_up)
-	arrows.add_child(checkpoint_order_down)
+	checkpoint_order_up = _number_arrow(1, _step_checkpoint_number, "checkpoint number")
+	checkpoint_order_down = _number_arrow(-1, _step_checkpoint_number, "checkpoint number")
+	checkpoint_properties.add_child(_number_controls(checkpoint_order, checkpoint_order_up, checkpoint_order_down))
 	checkpoint_finish = _button("Set Finish Checkpoint", _toggle_checkpoint_finish)
 	checkpoint_properties.add_child(checkpoint_finish)
 	var bottom := MenuPanel.new()
@@ -333,14 +325,32 @@ func _build_ui() -> void:
 	for button in [clear_dialog.get_ok_button(), clear_dialog.get_cancel_button()]:
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
-func _checkpoint_arrow(direction: int) -> Button:
-	var button := CheckpointOrderArrow.new()
+func _number_controls(value: Label, up: Button, down: Button) -> HBoxContainer:
+	var controls := HBoxContainer.new()
+	controls.add_theme_constant_override("separation", 4)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(48, 44)
+	controls.add_child(panel)
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	value.add_theme_font_size_override("font_size", 20)
+	panel.add_child(value)
+	var arrows := VBoxContainer.new()
+	arrows.add_theme_constant_override("separation", 2)
+	controls.add_child(arrows)
+	arrows.add_child(up)
+	arrows.add_child(down)
+	return controls
+
+func _number_arrow(direction: int, callback: Callable, subject: String) -> Button:
+	var button := NumberArrow.new()
 	button.direction = direction
 	button.custom_minimum_size = Vector2(34, 22)
 	button.focus_mode = Control.FOCUS_NONE
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	button.tooltip_text = "Increase checkpoint number" if direction > 0 else "Decrease checkpoint number"
-	button.pressed.connect(_step_checkpoint_number.bind(direction))
+	button.tooltip_text = ("Increase " if direction > 0 else "Decrease ") + subject
+	button.pressed.connect(callback.bind(direction))
 	return button
 
 func _step_checkpoint_number(step: int) -> void:
@@ -368,22 +378,52 @@ func _build_race_dialog() -> void:
 	race_explanation = Label.new()
 	race_explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(race_explanation)
+	race_unset_finish = _button("Unset Finish Checkpoint", _unset_race_finish)
+	column.add_child(race_unset_finish)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	column.add_child(row)
 	var caption := Label.new()
 	caption.text = "Laps"
-	column.add_child(caption)
-	race_laps = SpinBox.new()
-	race_laps.min_value = 1
-	race_laps.max_value = 99
-	column.add_child(race_laps)
+	row.add_child(caption)
+	race_laps = Label.new()
+	race_laps_up = _number_arrow(1, _step_race_laps, "lap count")
+	race_laps_down = _number_arrow(-1, _step_race_laps, "lap count")
+	row.add_child(_number_controls(race_laps, race_laps_up, race_laps_down))
+	race_laps_reset = _button("Reset Laps to 1", _reset_race_laps)
+	row.add_child(race_laps_reset)
 	race_dialog.confirmed.connect(_apply_race_settings)
+
+func _refresh_race_settings() -> void:
+	race_explanation.text = "Set the number of laps for this race." if race_finish_at_spawn else "To use laps, unset the finish checkpoint."
+	race_unset_finish.visible = not race_finish_at_spawn
+	race_laps.text = str(race_lap_count)
+	race_laps_up.disabled = not race_finish_at_spawn or race_lap_count >= LevelDocument.MAX_RACE_LAPS
+	race_laps_down.disabled = not race_finish_at_spawn or race_lap_count <= 1
+	race_laps_reset.disabled = not race_finish_at_spawn or race_lap_count == 1
+
+func _step_race_laps(step: int) -> void:
+	if not race_finish_at_spawn:
+		return
+	race_lap_count = clampi(race_lap_count + step, 1, LevelDocument.MAX_RACE_LAPS)
+	_refresh_race_settings()
+
+func _reset_race_laps() -> void:
+	if not race_finish_at_spawn:
+		return
+	race_lap_count = 1
+	_refresh_race_settings()
+
+func _unset_race_finish() -> void:
+	race_finish_at_spawn = true
+	_refresh_race_settings()
+	_fit_race_dialog.call_deferred()
 
 func _open_race_settings() -> void:
 	_cancel_action()
-	race_laps.value = document.race_laps
-	race_laps.editable = document.finish_checkpoint == 1
-	race_explanation.text = "Spawn is checkpoint 1. Pass each numbered hoop, then return to spawn to finish a lap. Select a checkpoint to change its number or set a separate finish."
-	if document.finish_checkpoint > 1:
-		race_explanation.text = "Checkpoint %d is the finish. Pass every hoop in order to finish the race. To enable laps, select the finish checkpoint and click Unset Finish Checkpoint." % document.finish_checkpoint
+	race_lap_count = document.race_laps
+	race_finish_at_spawn = document.finish_checkpoint == 1
+	_refresh_race_settings()
 	race_dialog.popup_centered(Vector2i(480, 0))
 	_fit_race_dialog.call_deferred()
 
@@ -396,14 +436,23 @@ func _fit_race_dialog() -> void:
 
 func _apply_race_settings() -> void:
 	var next := document.copy()
-	next.race_laps = int(race_laps.value) if next.finish_checkpoint == 1 else 1
+	if race_finish_at_spawn:
+		next.finish_checkpoint = 1
+	next.race_laps = race_lap_count if next.finish_checkpoint == 1 else 1
 	_commit(next)
 	_set_status("Race settings updated. Place hoops with Race checkpoint; select a hoop to edit its order.")
 
 func _refresh_checkpoint_properties() -> void:
 	var selected: bool = selection.get("kind", "") == "checkpoint" and int(selection.get("index", -1)) >= 0 and int(selection.get("index", -1)) < document.checkpoints.size()
-	checkpoint_properties.visible = selected
+	checkpoint_properties.visible = selected or tool == Tool.CHECKPOINT
+	checkpoint_label.text = "Selected Checkpoint" if selected else "Next Checkpoint"
+	checkpoint_finish.disabled = not selected
 	if not selected:
+		var next_number := document.checkpoints.size() + (2 if document.finish_checkpoint == 1 else 1)
+		checkpoint_order.text = str(next_number) if document.checkpoints.size() < LevelDocument.MAX_CHECKPOINTS else "-"
+		checkpoint_order_up.disabled = true
+		checkpoint_order_down.disabled = true
+		checkpoint_finish.text = "Set Finish Checkpoint"
 		return
 	var number := int(selection["index"]) + 2
 	var finish := document.finish_checkpoint == number
@@ -814,7 +863,7 @@ func _pick_object(world: Vector2) -> Dictionary:
 	if LevelDocument.valid_cell(document.spawn) and world.distance_to(LevelDocument.cell_position(document.spawn)) <= spawn_tolerance:
 		return {"kind": "spawn"}
 	for index in range(document.checkpoints.size() - 1, -1, -1):
-		if world.distance_to(LevelDocument.cell_position(document.checkpoints[index])) <= maxf(LevelDocument.CHECKPOINT_RADIUS + 12.0, 16.0 / camera.zoom.x):
+		if world.distance_to(LevelDocument.cell_position(document.checkpoints[index])) <= maxf(LevelDocument.CHECKPOINT_RADIUS + 12.0, CHECKPOINT_MIN_SCREEN_RADIUS / camera.zoom.x):
 			return {"kind": "checkpoint", "index": index}
 	for index in range(document.orbs.size() - 1, -1, -1):
 		if world.distance_to(LevelDocument.cell_position(document.orbs[index])) <= maxf(36.0, 12.0 / camera.zoom.x):
@@ -1010,4 +1059,4 @@ func _draw_checkpoint(canvas: Node2D, point: Vector2, number: int, selected: boo
 	var color := Color("ec839a") if number == document.finish_checkpoint else Color("46c7bb")
 	if selected or hovered:
 		color = Color("ffc947")
-	RaceCheckpoint.draw_hoop(canvas, point, maxf(LevelDocument.CHECKPOINT_RADIUS, 16.0 * scale_factor), caption, color, 4.0 * scale_factor, roundi(16 * scale_factor))
+	RaceCheckpoint.draw_hoop(canvas, point, maxf(LevelDocument.CHECKPOINT_RADIUS, CHECKPOINT_MIN_SCREEN_RADIUS * scale_factor), caption, color, 4.0 * scale_factor, roundi(16 * scale_factor))

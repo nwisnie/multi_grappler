@@ -14,7 +14,7 @@ output = repo / "build" / "multiplayer-browser" / "index.html"
 output.parent.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="multi-grappler-browser-") as directory:
     staging = Path(directory)
-    for name in ("assets", "scripts", "scenes", "tests", "addons"):
+    for name in ("assets", "scripts", "scenes", "tests", "addons", "web"):
         shutil.copytree(repo / name, staging / name)
     for name in ("project.godot", "export_presets.cfg"):
         shutil.copy2(repo / name, staging / name)

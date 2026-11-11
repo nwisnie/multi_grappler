@@ -23,7 +23,8 @@ func course() -> LevelDocument:
 
 func pass_hoop(race: Node2D, number: int) -> void:
 	var point: Vector2 = race.hoops[number - 1].global_position
-	race.advance_between(point + Vector2(-240, 0), point + Vector2(240, 0))
+	var approach := LevelDocument.CHECKPOINT_RADIUS + LevelDocument.PLAYER_RADIUS + 2.0
+	race.advance_between(point + Vector2(-approach, 0), point + Vector2(approach, 0))
 
 func _run() -> void:
 	_data_checks()
@@ -46,6 +47,13 @@ func _data_checks() -> void:
 	var old := LevelCodec.decode_level(legacy)
 	check(old["error"].is_empty() and old["document"].checkpoints.is_empty(), "Existing MG1 codes still import without checkpoints")
 	check(LevelCodec.encode_level(LevelDocument.new()) == legacy, "Unchanged non-race courses keep their original code")
+	var lap_limit := document.copy()
+	lap_limit.race_laps = 50
+	check(lap_limit.validate().is_empty() and LevelCodec.decode_level(LevelCodec.encode_level(lap_limit))["document"].race_laps == 50, "The 50-lap maximum survives level code export/import")
+	lap_limit.race_laps = 51
+	check(not lap_limit.validate().is_empty(), "More than 50 laps is rejected")
+	lap_limit.race_laps = 0
+	check(not lap_limit.validate().is_empty(), "Fewer than one lap is rejected")
 	var changed := document.copy()
 	changed.reorder_checkpoint(0, 4)
 	check(changed.checkpoints == [Vector2i(20, 10), Vector2i(25, 10), Vector2i(15, 10)] and document.checkpoints[0] == Vector2i(15, 10), "Renumbering reorders a deep copy without changing spawn")
@@ -56,7 +64,7 @@ func _data_checks() -> void:
 	check(changed.finish_checkpoint == 3, "Removing an earlier checkpoint renumbers finish")
 	changed.remove_checkpoint(1)
 	check(changed.finish_checkpoint == 1, "Deleting the finish restores finish at spawn")
-	for trailer in [PackedByteArray([82]), PackedByteArray([82, 2, 1, 1, 20, 20]), PackedByteArray([82, 0, 0, 1]), PackedByteArray([82, 1, 1, 3, 20, 20]), PackedByteArray([82, 1, 1, 1, 100, 20]), PackedByteArray([83, 0, 1, 1])]:
+	for trailer in [PackedByteArray([82]), PackedByteArray([82, 2, 1, 1, 20, 20]), PackedByteArray([82, 0, 0, 1]), PackedByteArray([82, 0, 51, 1]), PackedByteArray([82, 1, 1, 3, 20, 20]), PackedByteArray([82, 1, 1, 1, 100, 20]), PackedByteArray([83, 0, 1, 1])]:
 		var payload := legacy_payload.duplicate()
 		payload.append_array(trailer)
 		var invalid := LevelCodec.PREFIX + Marshalls.raw_to_base64(payload.compress(FileAccess.COMPRESSION_DEFLATE))
@@ -80,8 +88,14 @@ func _editor_checks() -> void:
 	await process_frame
 	await process_frame
 	await process_frame
+	editor._set_tool(GridLevelEditor.Tool.CHECKPOINT)
+	check(editor.checkpoint_properties.visible and editor.checkpoint_order.text == "2", "Checkpoint submenu opens immediately, including on an empty course")
+	check(editor.checkpoint_order_up.disabled and editor.checkpoint_order_down.disabled and editor.checkpoint_finish.disabled, "Next checkpoint preview cannot change an unplaced hoop")
+	editor._set_tool(GridLevelEditor.Tool.LINE)
+	check(not editor.checkpoint_properties.visible, "Unselected checkpoint submenu hides on other tools")
 	editor._commit(course())
 	editor._set_tool(GridLevelEditor.Tool.CHECKPOINT)
+	check(editor.checkpoint_properties.visible and editor.checkpoint_order.text == "5", "Checkpoint submenu previews the next course number before placement")
 	editor.mouse_on_board = true
 	editor.hover_cell = Vector2i(30, 10)
 	editor._click(LevelDocument.cell_position(editor.hover_cell))
@@ -115,18 +129,60 @@ func _editor_checks() -> void:
 	check(editor.document.checkpoints.size() == 4 and editor.document.finish_checkpoint == 5, "Erasing a checkpoint preserves finish and contiguous numbering")
 	editor.undo()
 	check(LevelCodec.encode_level(editor.document) == before, "Deletion undo restores race data exactly")
+	editor._open_race_settings()
+	check(editor.race_unset_finish.visible and editor.race_laps_up.disabled and editor.race_laps_down.disabled and editor.race_laps_reset.disabled, "Separate finish offers a direct unset button and disables lap arrows")
+	editor.race_unset_finish.pressed.emit()
+	editor.race_laps_up.pressed.emit()
+	check(not editor.race_unset_finish.visible and editor.race_laps.text == "2", "Unset finish immediately enables the custom lap counter in the dialog")
+	editor.race_dialog.hide()
+	check(editor.document.finish_checkpoint == 6 and editor.document.race_laps == 1, "Canceling race settings leaves finish and laps unchanged")
+	editor._open_race_settings()
+	check(editor.race_laps.text == "1" and editor.race_unset_finish.visible, "Reopening settings discards canceled lap changes")
+	editor.race_unset_finish.pressed.emit()
+	for step in range(2):
+		editor.race_laps_up.pressed.emit()
+	editor._apply_race_settings()
+	editor.race_dialog.hide()
+	check(editor.document.finish_checkpoint == 1 and editor.document.race_laps == 3, "Race settings can unset finish and apply laps together")
+	editor.undo()
+	check(editor.document.finish_checkpoint == 6 and editor.document.race_laps == 1, "Undo restores finish and laps together")
 	editor.selection = {"kind": "checkpoint", "index": editor.document.checkpoints.size() - 1}
 	editor._refresh_checkpoint_properties()
 	editor.checkpoint_finish.pressed.emit()
 	check(editor.checkpoint_finish.text == "Set Finish Checkpoint", "Unsetting finish restores the Set Finish Checkpoint action")
 	editor._open_race_settings()
-	editor.race_laps.value = 3
+	check(editor.race_laps is Label and editor.race_laps_down.disabled, "Lap count uses a read-only display and cannot decrease below one")
+	editor.race_laps_down.pressed.emit()
+	check(editor.race_laps.text == "1", "Lap count stays at its minimum")
+	for step in range(100):
+		editor.race_laps_up.pressed.emit()
+	check(editor.race_laps.text == "50" and editor.race_laps_up.disabled, "Lap count caps at 50 and disables its upper arrow")
+	for step in range(47):
+		editor.race_laps_down.pressed.emit()
+	check(editor.race_laps.text == "3" and not editor.race_laps_up.disabled, "Lap arrows decrease from the maximum and re-enable incrementing")
+	check(not editor.race_laps_reset.disabled, "Reset is available when more than one lap is selected")
+	editor.race_laps_reset.pressed.emit()
+	check(editor.race_laps.text == "1" and editor.race_laps_down.disabled and editor.race_laps_reset.disabled and not editor.race_laps_up.disabled, "Reset returns to one lap and updates arrow/button states")
+	for step in range(2):
+		editor.race_laps_up.pressed.emit()
 	editor._apply_race_settings()
 	editor.race_dialog.hide()
 	await process_frame
 	await process_frame
 	await process_frame
 	check(editor.document.finish_checkpoint == 1 and editor.document.race_laps == 3, "Returning finish to spawn enables editable laps")
+	editor._open_race_settings()
+	editor.race_laps_reset.pressed.emit()
+	editor.race_dialog.hide()
+	check(editor.document.race_laps == 3, "Canceling a lap reset preserves the saved lap count")
+	editor._open_race_settings()
+	check(editor.race_laps.text == "3", "Reopening settings discards a canceled lap reset")
+	editor.race_laps_reset.pressed.emit()
+	editor._apply_race_settings()
+	editor.race_dialog.hide()
+	check(editor.document.race_laps == 1, "Confirming a lap reset saves one lap")
+	editor.undo()
+	check(editor.document.race_laps == 3, "Undo restores the lap count before reset")
 	var race_code := LevelCodec.encode_level(editor.document)
 	editor.clear_level()
 	check(editor.import_code(race_code).is_empty() and editor.document.race_laps == 3 and editor.document.checkpoints.size() == 5, "Editor export/import preserves the entire race")
@@ -160,9 +216,10 @@ func _race_checks() -> void:
 	pass_hoop(race, 1)
 	check(race.next_number == 2 and not race.finished, "Skipping hoops or crossing finish early cannot finish a lap")
 	var target: Vector2 = race.next_position()
-	race.advance_between(target + Vector2(-300, 260), target + Vector2(300, 260))
+	var pass_radius := LevelDocument.CHECKPOINT_RADIUS + LevelDocument.PLAYER_RADIUS
+	race.advance_between(target + Vector2(-360, pass_radius + 24.0), target + Vector2(360, pass_radius + 24.0))
 	check(race.next_number == 2, "Passing entirely outside the hoop and ball overlap does not count")
-	race.advance_between(target + Vector2(-300, 220), target + Vector2(300, 220))
+	race.advance_between(target + Vector2(-360, pass_radius - 16.0), target + Vector2(360, pass_radius - 16.0))
 	check(race.next_number == 3, "Partial ball contact near the hoop rim counts as a forgiving checkpoint pass")
 	race.reset()
 	pass_hoop(race, 2)

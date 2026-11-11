@@ -11,7 +11,8 @@ const PLAYER_RADIUS := 48.0 * 1.18
 const MAX_SEGMENTS := 1024
 const MAX_ORBS := 128
 const MAX_CHECKPOINTS := 128
-const CHECKPOINT_RADIUS := 180.0
+const MAX_RACE_LAPS := 50
+const CHECKPOINT_RADIUS := 240.0
 enum SegmentKind { LINE, CURVE }
 
 var segments: Array[Dictionary] = []
@@ -138,8 +139,8 @@ static func segment_error(segment: Dictionary) -> String:
 func validate() -> String:
 	if checkpoints.size() > MAX_CHECKPOINTS:
 		return "Level limit: 128 race checkpoints, plus the spawn."
-	if race_laps < 1 or race_laps > 99:
-		return "Choose between 1 and 99 laps."
+	if race_laps < 1 or race_laps > MAX_RACE_LAPS:
+		return "Choose between 1 and %d laps." % MAX_RACE_LAPS
 	if finish_checkpoint != 1 and (checkpoints.is_empty() or finish_checkpoint != checkpoints.size() + 1):
 		return "A separate finish checkpoint must be the last hoop."
 	if finish_checkpoint > 1 and race_laps != 1:
