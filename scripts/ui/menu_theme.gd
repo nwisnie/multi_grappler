@@ -2,6 +2,8 @@ extends RefCounted
 ## A separate menu palette; the level editor keeps its original theme.
 
 const BASE := preload("res://assets/themes/game_theme.tres")
+const CHECKBOX_OFF := preload("res://assets/themes/menu_checkbox_off.svg")
+const CHECKBOX_ON := preload("res://assets/themes/menu_checkbox_on.svg")
 static var cached: Theme
 
 static func get_theme() -> Theme:
@@ -23,6 +25,18 @@ static func get_theme() -> Theme:
 		theme.set_color(key, "PrimaryButton", Color.BLACK)
 	theme.set_color("font_disabled_color", "Button", Color("737373"))
 	theme.set_stylebox("focus", "Button", StyleBoxEmpty.new())
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
+		var checkbox_style := StyleBoxEmpty.new()
+		checkbox_style.set_content_margin_all(6.0)
+		theme.set_stylebox(state, "CheckBox", checkbox_style)
+	for key in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
+		theme.set_color(key, "CheckBox", Color.BLACK)
+	theme.set_color("font_disabled_color", "CheckBox", Color("737373"))
+	theme.set_icon("unchecked", "CheckBox", CHECKBOX_OFF)
+	theme.set_icon("checked", "CheckBox", CHECKBOX_ON)
+	theme.set_icon("unchecked_disabled", "CheckBox", CHECKBOX_OFF)
+	theme.set_icon("checked_disabled", "CheckBox", CHECKBOX_ON)
+	theme.set_constant("h_separation", "CheckBox", 12)
 	theme.set_color("font_color", "Label", Color.BLACK)
 	for state in ["normal", "focus", "read_only"]:
 		theme.set_stylebox(state, "LineEdit", _box())

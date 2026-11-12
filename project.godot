@@ -16,6 +16,10 @@ config/features=PackedStringArray("4.3", "GL Compatibility")
 boot_splash/bg_color=Color(0.835294, 0.921569, 1, 1)
 boot_splash/image="res://assets/images/characters/player_ball/main_ball.png"
 
+[autoload]
+
+AccountSession="*res://scripts/network/account_session.gd"
+
 [display]
 
 window/size/viewport_width=1280
@@ -32,7 +36,7 @@ theme/custom="res://assets/themes/game_theme.tres"
 
 [network]
 
-signaling_url="ws://localhost:9080"
+signaling_url="ws://127.0.0.1:9080"
 
 [rendering]
 

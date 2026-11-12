@@ -1,4 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
+import { levels } from "./levels.js";
+import { accounts } from "./accounts.js";
 
 const PING = '{"type":"ping"}';
 const PONG = '{"type":"pong"}';
@@ -45,6 +47,8 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") return text("ok");
     if (url.pathname === "/lobbies") return publicLobbies(request, env);
+    if (url.pathname.startsWith("/auth/")) return accounts(request, env);
+    if (url.pathname === "/levels" || url.pathname.startsWith("/levels/")) return levels(request, env);
     const match = /^\/rooms\/(\d{8})$/.exec(url.pathname);
     const creating = url.pathname === "/";
     if (!creating && !match) return text("not found", 404);

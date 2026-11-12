@@ -35,10 +35,13 @@ const harness = `
 function runtime(t, options = {}) {
   const mf = new Miniflare(convertV4MiniflareOptions({
     workers: [{
-      name: "test", compatibilityDate: "2026-10-27",
+      name: "test", compatibilityDate: "2026-10-27", compatibilityFlags: ["nodejs_compat"],
       modules: [
         { type: "ESModule", path: "entry.js", contents: harness },
         { type: "ESModule", path: "worker.js", contents: source },
+        { type: "ESModule", path: "levels.js", contents: readFileSync(new URL("../src/levels.js", import.meta.url), "utf8") },
+        { type: "ESModule", path: "accounts.js", contents: readFileSync(new URL("../src/accounts.js", import.meta.url), "utf8") },
+        { type: "ESModule", path: "api_helpers.js", contents: readFileSync(new URL("../src/api_helpers.js", import.meta.url), "utf8") },
       ],
       bindings: { ALLOWED_ORIGINS: ORIGIN, ...options.bindings },
       durableObjects: { ROOMS: { className: "TestRoom", useSQLite: true }, LOBBIES: { className: "LobbyDirectory", useSQLite: true } },

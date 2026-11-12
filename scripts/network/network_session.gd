@@ -9,7 +9,7 @@ signal peer_arrived(peer_id: int)
 signal peer_left(peer_id: int)
 
 const CONNECT_TIMEOUT := 25.0
-const DEFAULT_URL := "ws://localhost:9080"
+const DEFAULT_URL := "ws://127.0.0.1:9080"
 const PUBLIC_URL := "wss://rooms.wizkinews.com"
 const HEARTBEAT_MSEC := 15000
 

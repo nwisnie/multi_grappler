@@ -7,6 +7,8 @@ signal playtest_requested(document: LevelDocument)
 const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
 const ToolbarButtonScript := preload("res://scripts/editor/editor_toolbar_button.gd")
 const RaceCheckpoint := preload("res://scripts/levels/race_checkpoint.gd")
+const LibraryClient := preload("res://scripts/levels/level_library_client.gd")
+const AccountDialog := preload("res://scripts/ui/account_dialog.gd")
 const CHECKPOINT_MIN_SCREEN_RADIUS := 22.0
 
 enum Tool { SELECT, LINE, CURVE, SPAWN, ORB, CHECKPOINT, ERASE }
@@ -49,6 +51,7 @@ class MenuPanel extends PanelContainer:
 			points.append(Vector2(x, baseline + wobble))
 		draw_polyline(points, Color("6b8595"), 2.0, true)
 
+var account_session: Node
 var document := LevelDocument.new()
 var tool: int = Tool.LINE
 var pending: Array[Vector2i] = []
@@ -99,8 +102,17 @@ var race_unset_finish: Button
 var race_lap_count := 1
 var race_finish_at_spawn := true
 var race_explanation: Label
+var upload_dialog: ConfirmationDialog
+var upload_title: LineEdit
+var upload_author: Label
+var account_dialog: AccountDialog
+var upload_message: Label
+var upload_client: LibraryClient
+var upload_code := ""
+var uploading := false
 
 func _ready() -> void:
+	account_session = get_node("/root/AccountSession")
 	camera = Camera2D.new()
 	camera.position = Vector2.ONE * LevelDocument.BOARD_SIZE * 0.5
 	camera.zoom = Vector2.ONE * 0.04
@@ -117,9 +129,10 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_viewport_changed)
 	_fit_after_layout.call_deferred()
 
-func _button(text: String, callback: Callable) -> Button:
+func _button(text: String, callback: Callable, tooltip: String = "") -> Button:
 	var button := ToolbarButtonScript.new()
 	button.text = text
+	button.tooltip_text = tooltip
 	button.focus_mode = Control.FOCUS_NONE
 	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -224,20 +237,21 @@ func _build_ui() -> void:
 	var actions := HFlowContainer.new()
 	rows.add_child(actions)
 	actions.add_child(_menu_title("Editor Actions"))
-	var show_level := _button("Show whole level", fit_grid)
+	var show_level := _button("Fit level", fit_grid)
 	show_level.tooltip_text = "Zoom and center the camera to show the entire level (F)."
 	actions.add_child(_strip([
 		_button("Playtest", _request_playtest),
-		_button("Main menu", func() -> void: exit_requested.emit()),
+		_button("Return to main menu", func() -> void: exit_requested.emit(), "Return to the main menu."),
 		show_level,
 	]))
 	undo_button = _button("Undo", undo)
 	redo_button = _button("Redo", redo)
 	actions.add_child(_strip([undo_button, redo_button, _button("Clear", func() -> void: clear_dialog.popup_centered())]))
 	actions.add_child(_strip([
-		_button("Export code", func() -> void: _open_code(false)),
-		_button("Import code", func() -> void: _open_code(true)),
-		_button("Race settings", _open_race_settings),
+		_button("Upload", _open_upload, "Publish this level to the community library."),
+		_button("Race Settings", _open_race_settings, "Configure race laps and the finish checkpoint."),
+		_button("Export", func() -> void: _open_code(false), "Export this level as a shareable code."),
+		_button("Import", func() -> void: _open_code(true), "Import a level from a code."),
 	]))
 	var tools := HFlowContainer.new()
 	rows.add_child(tools)
@@ -315,6 +329,7 @@ func _build_ui() -> void:
 	footer.add_child(help)
 	_build_code_dialog()
 	_build_race_dialog()
+	_build_upload_dialog()
 	clear_dialog = ConfirmationDialog.new()
 	DialogStyle.apply(clear_dialog)
 	clear_dialog.title = "Clear this level?"
@@ -587,6 +602,114 @@ func _request_playtest() -> void:
 		return
 	playtest_requested.emit(document.copy())
 
+func _build_upload_dialog() -> void:
+	upload_dialog = ConfirmationDialog.new()
+	DialogStyle.apply(upload_dialog)
+	upload_dialog.title = "Publish level"
+	upload_dialog.ok_button_text = "Upload"
+	upload_dialog.cancel_button_text = "Close"
+	upload_dialog.dialog_hide_on_ok = false
+	upload_dialog.exclusive = true
+	ui.add_child(upload_dialog)
+	var column := VBoxContainer.new()
+	column.custom_minimum_size.x = 440
+	column.add_theme_constant_override("separation", 14)
+	upload_dialog.add_child(column)
+	var explanation := Label.new()
+	explanation.text = "Publish this level for everyone to browse and play.\nThe library holds up to 100 levels."
+	column.add_child(explanation)
+	upload_title = LineEdit.new()
+	upload_title.placeholder_text = "Level name (required)"
+	upload_title.max_length = 64
+	column.add_child(upload_title)
+	upload_author = Label.new()
+	upload_author.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(upload_author)
+	upload_message = Label.new()
+	upload_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(upload_message)
+	upload_dialog.confirmed.connect(_submit_upload)
+	upload_dialog.canceled.connect(_cancel_upload)
+	upload_client = LibraryClient.new()
+	add_child(upload_client)
+	upload_client.completed.connect(_upload_completed)
+	account_dialog = AccountDialog.new()
+	ui.add_child(account_dialog)
+	account_dialog.authenticated.connect(_open_upload)
+	account_session.changed.connect(_sync_upload_account)
+
+func _sync_upload_account() -> void:
+	upload_author.text = "Uploading as %s" % account_session.username if account_session.is_signed_in() else "Sign in to upload."
+
+func _open_upload() -> void:
+	_cancel_action()
+	if not account_session.is_signed_in():
+		account_dialog.prompt("Sign in or create an account to upload levels.")
+		return
+	var error := document.playtest_error()
+	if not error.is_empty():
+		_set_status(error, true)
+		return
+	upload_code = LevelCodec.encode_level(document)
+	_sync_upload_account()
+	_set_uploading(false)
+	upload_message.text = ""
+	upload_message.hide()
+	upload_dialog.popup_centered(Vector2i(480, 0))
+	_fit_upload_dialog.call_deferred()
+	upload_title.grab_focus.call_deferred()
+
+func _fit_upload_dialog() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if upload_dialog.visible:
+		upload_dialog.reset_size()
+		upload_dialog.move_to_center()
+
+func _set_uploading(value: bool) -> void:
+	uploading = value
+	upload_dialog.get_ok_button().disabled = value
+	upload_title.editable = not value
+
+func _submit_upload() -> void:
+	if uploading:
+		return
+	if not account_session.is_signed_in():
+		upload_dialog.hide()
+		_open_upload()
+		return
+	upload_message.show()
+	if upload_title.text.strip_edges().is_empty():
+		upload_message.text = "Give your level a name before uploading."
+		return
+	_set_uploading(true)
+	upload_message.text = "Uploading level..."
+	upload_client.upload_level(upload_title.text.strip_edges(), upload_code)
+
+func _upload_completed(response_code: int, payload: Dictionary, error: String) -> void:
+	_set_uploading(false)
+	if not upload_dialog.visible:
+		return
+	upload_message.show()
+	if not error.is_empty():
+		upload_message.text = error
+		if response_code == 401:
+			account_session.invalidate()
+			upload_dialog.hide()
+			account_dialog.prompt("Your session has expired. Sign in again to upload your level.")
+		_fit_upload_dialog.call_deferred()
+		return
+	if response_code not in [200, 201] or not payload.get("id") is String:
+		upload_message.text = "The library returned an invalid upload response. Try again."
+		return
+	upload_message.text = "This level is already published. Find it in Browse Levels." if payload.get("duplicate", false) else "Level published! Find it in Browse Levels."
+	upload_dialog.get_ok_button().disabled = true
+	_set_status(upload_message.text)
+
+func _cancel_upload() -> void:
+	upload_client.cancel()
+	_set_uploading(false)
+
 func _set_status(message: String, error: bool = false) -> void:
 	status.text = message
 	status.modulate = Color("fda397") if error else Color.WHITE
@@ -651,6 +774,10 @@ func resume() -> void:
 
 func suspend() -> void:
 	_cancel_action()
+	_cancel_upload()
+	account_dialog.dismiss()
+	for dialog in [code_dialog, clear_dialog, race_dialog, upload_dialog]:
+		dialog.hide()
 	visible = false
 	process_mode = Node.PROCESS_MODE_DISABLED
 	ui.visible = false
@@ -722,7 +849,7 @@ func _update_canvas_cursor() -> void:
 	Input.set_default_cursor_shape(shape)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if code_dialog.visible or clear_dialog.visible or race_dialog.visible:
+	if code_dialog.visible or clear_dialog.visible or race_dialog.visible or upload_dialog.visible or account_dialog.visible:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:

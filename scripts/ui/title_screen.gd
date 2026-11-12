@@ -2,6 +2,7 @@ extends Control
 
 signal tutorial_requested
 signal editor_requested
+signal browse_levels_requested
 signal join_requested
 signal host_requested
 signal settings_requested
@@ -26,6 +27,10 @@ var settings_button: Button
 var fullscreen_button: Button
 var main_actions: VBoxContainer
 var multiplayer_actions: VBoxContainer
+var editor_actions: VBoxContainer
+var browse_levels_button: Button
+var create_level_button: Button
+var editor_back_button: Button
 var wave_items: Array[Control] = []
 var wave_time := 0.0
 
@@ -93,7 +98,7 @@ func _ready() -> void:
 	column.add_child(main_actions)
 	multiplayer_button = _button("Multiplayer", show_multiplayer_options)
 	tutorial_button = _button("Tutorial", func() -> void: tutorial_requested.emit())
-	editor_button = _button("Level Editor", func() -> void: editor_requested.emit())
+	editor_button = _button("Level Editor", show_editor_options)
 	settings_button = _button("Settings", func() -> void: settings_requested.emit())
 	for button in [multiplayer_button, editor_button, tutorial_button, settings_button]:
 		main_actions.add_child(button)
@@ -106,6 +111,15 @@ func _ready() -> void:
 	multiplayer_back_button = _button("Back", show_main_options)
 	for button in [join_button, host_button, multiplayer_back_button]:
 		multiplayer_actions.add_child(button)
+	editor_actions = VBoxContainer.new()
+	editor_actions.name = "EditorActions"
+	editor_actions.add_theme_constant_override("separation", 12)
+	column.add_child(editor_actions)
+	browse_levels_button = _button("Browse Levels", func() -> void: browse_levels_requested.emit())
+	create_level_button = _button("Create New", func() -> void: editor_requested.emit())
+	editor_back_button = _button("Back", show_main_options)
+	for button in [browse_levels_button, create_level_button, editor_back_button]:
+		editor_actions.add_child(button)
 	fullscreen_button = _button("Fullscreen", func() -> void: fullscreen_requested.emit())
 	fullscreen_button.name = "FullscreenButton"
 	fullscreen_button.custom_minimum_size = Vector2(240, 44)
@@ -118,12 +132,20 @@ func _ready() -> void:
 func show_main_options() -> void:
 	main_actions.show()
 	multiplayer_actions.hide()
+	editor_actions.hide()
 	multiplayer_button.grab_focus.call_deferred()
 
 func show_multiplayer_options() -> void:
 	main_actions.hide()
+	editor_actions.hide()
 	multiplayer_actions.show()
 	join_button.grab_focus.call_deferred()
+
+func show_editor_options() -> void:
+	main_actions.hide()
+	multiplayer_actions.hide()
+	editor_actions.show()
+	browse_levels_button.grab_focus.call_deferred()
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():

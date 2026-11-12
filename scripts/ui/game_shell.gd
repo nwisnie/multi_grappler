@@ -10,13 +10,18 @@ const NetworkWorld := preload("res://scripts/network/network_world.gd")
 const SessionScript := preload("res://scripts/network/network_session.gd")
 const TitleMenuButton := preload("res://scripts/ui/title_menu_button.gd")
 const MenuTheme := preload("res://scripts/ui/menu_theme.gd")
+const LevelBrowser := preload("res://scripts/ui/level_browser.gd")
+const AccountDialog := preload("res://scripts/ui/account_dialog.gd")
 
-enum Screen { MAIN_MENU, TUTORIAL, EDITOR, PLAYTEST, MULTIPLAYER }
+enum Screen { MAIN_MENU, TUTORIAL, EDITOR, PLAYTEST, MULTIPLAYER, LEVEL_BROWSER, COMMUNITY_LEVEL }
 
+var account_session: Node
 var screen: int = Screen.MAIN_MENU
 var world: Node
 var editor: GridLevelEditor
 var title_screen: Control
+var level_browser: LevelBrowser
+var pause_browser_button: Button
 var menu_layer: CanvasLayer
 var dimmer: ColorRect
 var join_dialog: ConfirmationDialog
@@ -47,14 +52,19 @@ var resume_button: Button
 var pause_editor_button: Button
 var pause_restart_button: Button
 var settings_dialog: ConfirmationDialog
+var account_dialog: AccountDialog
+var account_status: Label
+var account_sign_in: Button
+var account_sign_out: Button
 var camera_zoom_slider: HSlider
-var wall_cursor_toggle: CheckButton
-var fullscreen_toggle: CheckButton
+var wall_cursor_toggle: CheckBox
+var fullscreen_toggle: CheckBox
 var camera_zoom := 0.65
 var show_wall_cursor := false
 var resume_waiting_for_release := false
 
 func _ready() -> void:
+	account_session = get_node("/root/AccountSession")
 	# UI remains responsive while the gameplay subtree is paused.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	menu_layer = CanvasLayer.new()
@@ -64,10 +74,16 @@ func _ready() -> void:
 	menu_layer.add_child(title_screen)
 	title_screen.tutorial_requested.connect(show_demo)
 	title_screen.editor_requested.connect(show_editor)
+	title_screen.browse_levels_requested.connect(show_level_browser)
 	title_screen.join_requested.connect(show_join_menu)
 	title_screen.host_requested.connect(show_host_menu)
 	title_screen.settings_requested.connect(show_settings)
 	title_screen.fullscreen_requested.connect(_toggle_fullscreen)
+	level_browser = LevelBrowser.new()
+	menu_layer.add_child(level_browser)
+	level_browser.back_requested.connect(_leave_level_browser)
+	level_browser.play_requested.connect(play_community_level)
+	level_browser.hide()
 	dimmer = ColorRect.new()
 	dimmer.color = Color(0.015, 0.035, 0.06, 0.7)
 	menu_layer.add_child(dimmer)
@@ -216,13 +232,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			if loading_screen.visible:
 				if event.keycode == KEY_ESCAPE:
 					show_main_menu()
+			elif account_dialog.visible:
+				account_dialog.dismiss()
+				_return_account_settings()
 			elif settings_dialog.visible:
 				_close_settings()
 			elif pause_dialog.visible:
 				resume_game()
 			elif is_instance_valid(world):
 				pause_game()
-			elif event.keycode == KEY_ESCAPE and title_screen.visible and title_screen.multiplayer_actions.visible:
+			elif event.keycode == KEY_ESCAPE and level_browser.visible:
+				_leave_level_browser()
+			elif event.keycode == KEY_ESCAPE and title_screen.visible and (title_screen.multiplayer_actions.visible or title_screen.editor_actions.visible):
 				title_screen.show_main_options()
 			else:
 				return
@@ -489,7 +510,9 @@ func _build_pause_menu() -> void:
 	column.add_child(_button("Settings", show_settings))
 	pause_editor_button = _button("Back to Level Editor", show_editor)
 	pause_restart_button = _button("Restart Level", _restart_playtest)
+	pause_browser_button = _button("Back to Browse Levels", show_level_browser)
 	column.add_child(pause_editor_button)
+	column.add_child(pause_browser_button)
 	column.add_child(pause_restart_button)
 
 func _build_settings_menu() -> void:
@@ -510,7 +533,7 @@ func _build_settings_menu() -> void:
 		_apply_player_settings(_player())
 	)
 	column.add_child(camera_zoom_slider)
-	wall_cursor_toggle = CheckButton.new()
+	wall_cursor_toggle = CheckBox.new()
 	wall_cursor_toggle.text = "Show wall grapple cursor"
 	wall_cursor_toggle.toggled.connect(func(enabled: bool) -> void:
 		show_wall_cursor = enabled
@@ -518,11 +541,46 @@ func _build_settings_menu() -> void:
 	)
 	DialogStyle.ButtonPulse.install(wall_cursor_toggle, false, true)
 	column.add_child(wall_cursor_toggle)
-	fullscreen_toggle = CheckButton.new()
+	fullscreen_toggle = CheckBox.new()
 	fullscreen_toggle.text = "Fullscreen"
 	fullscreen_toggle.toggled.connect(_set_fullscreen)
 	DialogStyle.ButtonPulse.install(fullscreen_toggle, false, true)
 	column.add_child(fullscreen_toggle)
+	account_status = _label("")
+	column.add_child(account_status)
+	account_sign_in = _button("Sign in / Create account", _show_account_settings)
+	account_sign_out = _button("Sign out", account_session.sign_out)
+	column.add_child(account_sign_in)
+	column.add_child(account_sign_out)
+	account_dialog = AccountDialog.new()
+	account_dialog.light = true
+	menu_layer.add_child(account_dialog)
+	account_dialog.authenticated.connect(_return_account_settings)
+	account_dialog.canceled.connect(_return_account_settings)
+	account_session.changed.connect(_sync_account_controls)
+	account_session.completed.connect(_account_operation_completed)
+	_sync_account_controls()
+
+func _sync_account_controls() -> void:
+	var signed_in: bool = account_session.is_signed_in()
+	account_status.text = "Signed in as %s" % account_session.username if signed_in else "Make an account to upload levels and track your times."
+	account_sign_in.visible = not signed_in
+	account_sign_out.visible = signed_in
+	account_sign_in.disabled = account_session.busy
+	account_sign_out.disabled = account_session.busy
+
+func _show_account_settings() -> void:
+	settings_dialog.hide()
+	account_dialog.prompt("Sign in or create an account to publish your levels.")
+
+func _return_account_settings() -> void:
+	_sync_account_controls()
+	_popup(settings_dialog)
+
+func _account_operation_completed(action: String, error: String) -> void:
+	if action == "logout" and not error.is_empty():
+		account_status.text = "Signed out on this device. Could not end the server session; it will expire automatically."
+		_fit_popup.call_deferred(settings_dialog)
 
 func _is_fullscreen() -> bool:
 	return DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN, DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
@@ -566,7 +624,8 @@ func pause_game() -> void:
 	get_tree().paused = screen != Screen.MULTIPLAYER
 	dimmer.show()
 	pause_editor_button.visible = screen == Screen.PLAYTEST
-	pause_restart_button.visible = screen == Screen.PLAYTEST
+	pause_restart_button.visible = screen in [Screen.PLAYTEST, Screen.COMMUNITY_LEVEL]
+	pause_browser_button.visible = screen == Screen.COMMUNITY_LEVEL
 	_popup(pause_dialog)
 
 func resume_game() -> void:
@@ -580,6 +639,7 @@ func resume_game() -> void:
 func show_settings() -> void:
 	pause_dialog.hide()
 	dimmer.show()
+	_sync_account_controls()
 	_sync_fullscreen_controls()
 	_popup(settings_dialog)
 	camera_zoom_slider.grab_focus.call_deferred()
@@ -594,6 +654,8 @@ func _close_settings() -> void:
 
 func _clear_menus() -> void:
 	_cancel_lobby_refresh()
+	account_dialog.dismiss()
+	level_browser.close()
 	loading_screen.hide()
 	loading_origin = null
 	get_tree().paused = false
@@ -645,6 +707,37 @@ func show_editor() -> void:
 		add_child(editor)
 	else:
 		editor.resume()
+
+func show_level_browser() -> void:
+	_clear_menus()
+	title_screen.hide()
+	if is_instance_valid(editor):
+		editor.suspend()
+	_dispose_world()
+	screen = Screen.LEVEL_BROWSER
+	level_browser.open()
+
+func _leave_level_browser() -> void:
+	show_main_menu()
+	title_screen.show_editor_options()
+
+func play_community_level(document: LevelDocument) -> void:
+	var custom: CustomLevel = CustomScene.instantiate()
+	var error := custom.prepare(document)
+	if not error.is_empty():
+		custom.free()
+		level_browser.status.text = error
+		return
+	_clear_menus()
+	title_screen.hide()
+	if is_instance_valid(editor):
+		editor.suspend()
+	_dispose_world()
+	screen = Screen.COMMUNITY_LEVEL
+	world = custom
+	world.process_mode = Node.PROCESS_MODE_PAUSABLE
+	custom.player_spawned.connect(_apply_player_settings)
+	add_child(world)
 
 func playtest(document: LevelDocument) -> void:
 	var custom: CustomLevel = CustomScene.instantiate()

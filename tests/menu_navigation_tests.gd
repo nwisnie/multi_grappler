@@ -172,6 +172,14 @@ func _run() -> void:
 	shell.title_screen.editor_button.pressed.emit()
 	await process_frame
 	await process_frame
+	check(shell.title_screen.editor_actions.visible and shell.editor == null, "Level Editor opens submenu before creating editor")
+	check(shell.title_screen.browse_levels_button.has_focus(), "Editor submenu focuses Browse Levels")
+	key(shell, KEY_ESCAPE)
+	check(shell.title_screen.main_actions.visible, "Escape returns from editor submenu")
+	shell.title_screen.editor_button.pressed.emit()
+	shell.title_screen.create_level_button.pressed.emit()
+	await process_frame
+	await process_frame
 	var document := LevelDocument.new()
 	document.spawn = Vector2i(12, 8)
 	document.segments.append({"kind": 0, "a": Vector2i(10, 10), "b": Vector2i(20, 10)})
