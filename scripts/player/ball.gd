@@ -16,6 +16,7 @@ const CAMERA_MAX_ZOOM_OUT := Vector2(0.45, 0.45)
 const CAMERA_ZOOM_SPEED := 3.5
 const GRAPPLE_MAX_DISTANCE := 2200.0
 const GrappleCursorScript := preload("res://scripts/grapple/grapple_cursor.gd")
+const GrappleDirectionScript := preload("res://scripts/grapple/grapple_direction.gd")
 const GrappleEffectScript := preload("res://scripts/grapple/grapple_effect.gd")
 const GRAPPLE_VISUAL_SHOOT_SPEED := 10000.0
 const GRAPPLE_MIN_LENGTH := 24.0
@@ -94,6 +95,7 @@ var player_ui_layer: CanvasLayer
 var heart_texture_rect: TextureRect
 var player_health_bar: EnemyHealthBar
 var grapple_cursor: Node2D
+var grapple_direction: Node2D
 var grapple_target_available := false
 var grapple_target_position := Vector2.ZERO
 var highlighted_grapple_target: Node
@@ -182,6 +184,9 @@ func _ready() -> void:
 	grapple_cursor = GrappleCursorScript.new()
 	grapple_cursor.name = "GrappleCursor"
 	player_ui_layer.add_child(grapple_cursor)
+	grapple_direction = GrappleDirectionScript.new()
+	grapple_direction.name = "GrappleDirection"
+	player_ui_layer.add_child(grapple_direction)
 
 func reset_spawn_orientation() -> void:
 	rotation = 0.0
@@ -199,6 +204,7 @@ func _process(delta: float) -> void:
 	# Resolve the current mouse ray every rendered frame, with no aim smoothing.
 	_refresh_grapple_target()
 	_update_grapple_cursor()
+	_update_grapple_direction()
 	_update_grapple_visuals(delta)
 
 func _physics_process(delta: float) -> void:
@@ -826,6 +832,17 @@ func _update_grapple_cursor() -> void:
 	grapple_cursor.show_glow = not orb_selected
 	var available := (show_grapple_cursor or orb_selected) and (grapple_active or grapple_target_available) and not controls_locked and is_visible_in_tree()
 	grapple_cursor.set_target(get_canvas_transform() * target, available, grapple_active)
+
+func _update_grapple_direction() -> void:
+	if grapple_direction == null:
+		return
+	var canvas := get_canvas_transform()
+	# Aiming still has a direction when no surface is in range (often overhead).
+	# Valid orb targets keep their snapped center, matching the actual launch.
+	var target := grapple_target_position if grapple_target_available else get_global_mouse_position()
+	var available := not grapple_active and not controls_locked and is_visible_in_tree()
+	var screen_radius := LevelDocument.PLAYER_RADIUS * canvas.x.length()
+	grapple_direction.set_aim(canvas * global_position, canvas * target, available, screen_radius, grapple_target_available)
 
 func _try_start_grapple() -> bool:
 	var result := _find_grapple_target()

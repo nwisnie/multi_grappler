@@ -15,6 +15,7 @@ func check(condition: bool, message: String) -> void:
 		push_error(message)
 
 func _run() -> void:
+	preload("res://scripts/ui/menu_slide.gd").duration_scale = 0.0
 	account_session = root.get_node("AccountSession")
 	ProjectSettings.set_setting("network/level_library_url", "http://localhost:9080/levels")
 	check(LibraryClient.base_url() == "http://127.0.0.1:9080/levels", "Local account requests use Wrangler's IPv4 loopback address")

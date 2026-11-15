@@ -5,6 +5,7 @@ signal exit_requested
 signal playtest_requested(document: LevelDocument)
 
 const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
+const MenuSlide := preload("res://scripts/ui/menu_slide.gd")
 const ToolbarButtonScript := preload("res://scripts/editor/editor_toolbar_button.gd")
 const RaceCheckpoint := preload("res://scripts/levels/race_checkpoint.gd")
 const LibraryClient := preload("res://scripts/levels/level_library_client.gd")
@@ -246,7 +247,7 @@ func _build_ui() -> void:
 	]))
 	undo_button = _button("Undo", undo)
 	redo_button = _button("Redo", redo)
-	actions.add_child(_strip([undo_button, redo_button, _button("Clear", func() -> void: clear_dialog.popup_centered())]))
+	actions.add_child(_strip([undo_button, redo_button, _button("Clear", _open_clear_dialog)]))
 	actions.add_child(_strip([
 		_button("Upload", _open_upload, "Publish this level to the community library."),
 		_button("Race Settings", _open_race_settings, "Configure race laps and the finish checkpoint."),
@@ -334,11 +335,21 @@ func _build_ui() -> void:
 	DialogStyle.apply(clear_dialog)
 	clear_dialog.title = "Clear this level?"
 	clear_dialog.dialog_text = "Remove all terrain, orbs, checkpoints, and the spawn? You can undo this."
-	clear_dialog.confirmed.connect(clear_level)
+	clear_dialog.dialog_hide_on_ok = false
+	clear_dialog.confirmed.connect(func() -> void:
+		clear_level()
+		MenuSlide.dismiss(clear_dialog)
+	)
 	ui.add_child(clear_dialog)
 	clear_dialog.get_ok_button().theme_type_variation = &"DangerButton"
 	for button in [clear_dialog.get_ok_button(), clear_dialog.get_cancel_button()]:
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	for dialog in [clear_dialog, race_dialog, code_dialog, upload_dialog]:
+		MenuSlide.install_popup(dialog)
+
+func _open_clear_dialog() -> void:
+	_cancel_action()
+	MenuSlide.popup(clear_dialog, Vector2i.ZERO)
 
 func _number_controls(value: Label, up: Button, down: Button) -> HBoxContainer:
 	var controls := HBoxContainer.new()
@@ -407,7 +418,11 @@ func _build_race_dialog() -> void:
 	row.add_child(_number_controls(race_laps, race_laps_up, race_laps_down))
 	race_laps_reset = _button("Reset Laps to 1", _reset_race_laps)
 	row.add_child(race_laps_reset)
-	race_dialog.confirmed.connect(_apply_race_settings)
+	race_dialog.dialog_hide_on_ok = false
+	race_dialog.confirmed.connect(func() -> void:
+		_apply_race_settings()
+		MenuSlide.dismiss(race_dialog)
+	)
 
 func _refresh_race_settings() -> void:
 	race_explanation.text = "Set the number of laps for this race." if race_finish_at_spawn else "To use laps, unset the finish checkpoint."
@@ -439,7 +454,7 @@ func _open_race_settings() -> void:
 	race_lap_count = document.race_laps
 	race_finish_at_spawn = document.finish_checkpoint == 1
 	_refresh_race_settings()
-	race_dialog.popup_centered(Vector2i(480, 0))
+	MenuSlide.popup(race_dialog, Vector2i(480, 0))
 	_fit_race_dialog.call_deferred()
 
 func _fit_race_dialog() -> void:
@@ -447,7 +462,7 @@ func _fit_race_dialog() -> void:
 	await get_tree().process_frame
 	if race_dialog.visible:
 		race_dialog.reset_size()
-		race_dialog.move_to_center()
+		MenuSlide.recenter(race_dialog)
 
 func _apply_race_settings() -> void:
 	var next := document.copy()
@@ -563,7 +578,7 @@ func _open_code(is_import: bool) -> void:
 	code_text.text = "" if importing else LevelCodec.encode_level(document)
 	code_count.text = "%s characters" % code_text.text.length()
 	code_error.text = "Import replaces this draft; Undo restores it." if importing else "Keep this code before closing the game. Drafts are not saved automatically."
-	code_dialog.popup_centered_ratio(0.65)
+	MenuSlide.popup(code_dialog, Vector2i(get_viewport_rect().size * 0.65))
 	code_text.grab_focus()
 	if not importing:
 		code_text.select_all()
@@ -584,7 +599,7 @@ func _confirm_code() -> void:
 		if not error.is_empty():
 			code_error.text = error
 			return
-	code_dialog.hide()
+	MenuSlide.dismiss(code_dialog)
 
 func _set_tool(value: int) -> void:
 	_cancel_action()
@@ -655,7 +670,7 @@ func _open_upload() -> void:
 	_set_uploading(false)
 	upload_message.text = ""
 	upload_message.hide()
-	upload_dialog.popup_centered(Vector2i(480, 0))
+	MenuSlide.popup(upload_dialog, Vector2i(480, 0))
 	_fit_upload_dialog.call_deferred()
 	upload_title.grab_focus.call_deferred()
 
@@ -664,7 +679,7 @@ func _fit_upload_dialog() -> void:
 	await get_tree().process_frame
 	if upload_dialog.visible:
 		upload_dialog.reset_size()
-		upload_dialog.move_to_center()
+		MenuSlide.recenter(upload_dialog)
 
 func _set_uploading(value: bool) -> void:
 	uploading = value
@@ -675,8 +690,7 @@ func _submit_upload() -> void:
 	if uploading:
 		return
 	if not account_session.is_signed_in():
-		upload_dialog.hide()
-		_open_upload()
+		MenuSlide.dismiss(upload_dialog, _open_upload)
 		return
 	upload_message.show()
 	if upload_title.text.strip_edges().is_empty():
@@ -695,8 +709,9 @@ func _upload_completed(response_code: int, payload: Dictionary, error: String) -
 		upload_message.text = error
 		if response_code == 401:
 			account_session.invalidate()
-			upload_dialog.hide()
-			account_dialog.prompt("Your session has expired. Sign in again to upload your level.")
+			MenuSlide.dismiss(upload_dialog, func() -> void:
+				account_dialog.prompt("Your session has expired. Sign in again to upload your level.")
+			)
 		_fit_upload_dialog.call_deferred()
 		return
 	if response_code not in [200, 201] or not payload.get("id") is String:
@@ -775,9 +790,9 @@ func resume() -> void:
 func suspend() -> void:
 	_cancel_action()
 	_cancel_upload()
-	account_dialog.dismiss()
+	account_dialog.dismiss(false)
 	for dialog in [code_dialog, clear_dialog, race_dialog, upload_dialog]:
-		dialog.hide()
+		MenuSlide.hide_now(dialog)
 	visible = false
 	process_mode = Node.PROCESS_MODE_DISABLED
 	ui.visible = false

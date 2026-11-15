@@ -56,6 +56,7 @@ func _run() -> void:
 	await physics_frame
 	check(player.controls_locked, "Network player remains locked while the menu is open")
 	shell.resume_game()
+	await create_timer(preload("res://scripts/ui/menu_slide.gd").EXIT_DURATION + 0.1).timeout
 	await process_frame
 	await process_frame
 	check(not player.controls_locked, "Closing the menu restores local controls")

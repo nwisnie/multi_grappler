@@ -2,9 +2,12 @@ extends Control
 ## A screen-space arrow beside the player points toward the required hoop.
 
 const FONT := preload("res://assets/fonts/KosugiMaru-Regular.ttf")
+const Arrow := preload("res://scripts/ui/hand_drawn_arrow.gd")
+const ARROW_COLOR := Color("d89b26")
 
 var race: Node2D
 var status: Label
+var ripple_time := 0.0
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -24,10 +27,11 @@ func _ready() -> void:
 	status.offset_top = 20.0
 	status.offset_bottom = 130.0
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not is_instance_valid(race) or not is_instance_valid(race.player):
 		hide()
 		return
+	ripple_time = fposmod(ripple_time + delta, TAU)
 	var time := "%02d:%05.2f" % [int(race.elapsed / 60.0), fmod(race.elapsed, 60.0)]
 	if race.finished:
 		status.text = "Race finished!\n" + time
@@ -45,15 +49,9 @@ func _draw() -> void:
 	var direction := origin.direction_to(target)
 	if direction.is_zero_approx():
 		direction = Vector2.UP
-	var tip := origin + direction * 122.0
-	var back := origin + direction * 98.0
-	var side := direction.orthogonal() * 11.0
-	var points := PackedVector2Array([tip, back + side, back - side])
-	draw_line(origin + direction * 78.0, back, Color("18272e"), 10.0, true)
-	draw_line(origin + direction * 78.0, back, Color("ffd36f"), 5.0, true)
-	draw_colored_polygon(points, Color("ffd36f"))
-	points.append(points[0])
-	draw_polyline(points, Color("18272e"), 3.0, true)
-	var text_position := origin + direction * 148.0 + Vector2(-12, 8)
-	draw_string_outline(FONT, text_position, str(race.next_number), HORIZONTAL_ALIGNMENT_LEFT, -1, 24, 5, Color("18272e"))
-	draw_string(FONT, text_position, str(race.next_number), HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE)
+	Arrow.draw_arrow(self, origin + direction * 96.0, direction, ARROW_COLOR, 1.0, ripple_time, float(race.next_number))
+	var number := str(race.next_number)
+	var text_size := FONT.get_string_size(number, HORIZONTAL_ALIGNMENT_LEFT, -1, 24)
+	var text_position := origin + direction * 166.0 + Vector2(-text_size.x * 0.5, 8)
+	draw_string_outline(FONT, text_position, number, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, 4, Arrow.OUTLINE_COLOR)
+	draw_string(FONT, text_position, number, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, ARROW_COLOR)

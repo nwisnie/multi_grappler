@@ -21,6 +21,7 @@ func key(shell: Node, code: Key) -> void:
 	shell._unhandled_input(event)
 
 func _run() -> void:
+	preload("res://scripts/ui/menu_slide.gd").duration_scale = 0.0
 	account_session = root.get_node("AccountSession")
 	ProjectSettings.set_setting("network/level_library_url", "invalid-url")
 	account_session.invalidate()

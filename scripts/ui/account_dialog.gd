@@ -3,6 +3,7 @@ extends ConfirmationDialog
 signal authenticated
 
 const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
+const MenuSlide := preload("res://scripts/ui/menu_slide.gd")
 var account_session: Node
 var light := false
 var choices: VBoxContainer
@@ -23,6 +24,7 @@ var _fit_pending := false
 func _ready() -> void:
 	account_session = get_node("/root/AccountSession")
 	DialogStyle.apply(self, light)
+	MenuSlide.install_popup(self)
 	title = "Account"
 	exclusive = true
 	cancel_button_text = "Cancel"
@@ -101,11 +103,20 @@ func prompt(reason: String = "Sign in or create an account.") -> void:
 	get_ok_button().hide()
 	switch_button.hide()
 	_set_busy(false)
-	popup_centered(Vector2i(460, 0))
+	MenuSlide.popup(self, Vector2i(460, 0))
 	_fit.call_deferred()
 	sign_in_button.grab_focus.call_deferred()
 
 func _show_form(create: bool) -> void:
+	if visible:
+		MenuSlide.dismiss(self, func() -> void:
+			_apply_form(create)
+			MenuSlide.popup(self, Vector2i(460, 0))
+		)
+	else:
+		_apply_form(create)
+
+func _apply_form(create: bool) -> void:
 	creating = create
 	title = "Create account" if create else "Sign in"
 	choices.hide()
@@ -162,8 +173,7 @@ func _completed(action: String, error: String) -> void:
 		message.text = error
 		_fit.call_deferred()
 		return
-	hide()
-	authenticated.emit()
+	MenuSlide.dismiss(self, func() -> void: authenticated.emit())
 
 func _cancel() -> void:
 	if submitting:
@@ -172,9 +182,12 @@ func _cancel() -> void:
 	password_input.clear()
 	confirm_password.clear()
 
-func dismiss() -> void:
+func dismiss(animate: bool = true) -> void:
 	_cancel()
-	hide()
+	if animate:
+		MenuSlide.dismiss(self)
+	else:
+		MenuSlide.hide_now(self)
 
 func _fit() -> void:
 	if _fit_pending:
@@ -189,4 +202,4 @@ func _finish_fit() -> void:
 	_fit_pending = false
 	if visible:
 		reset_size()
-		move_to_center()
+		MenuSlide.recenter(self)

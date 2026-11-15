@@ -57,6 +57,7 @@ func _run() -> void:
 		[Vector2(600, 0), Vector2(580, 0)],
 		[Vector2(0, 450), Vector2(0, 430)],
 		[Vector2(400, -400), Vector2(400, -400)],
+		[Vector2(420, -350), Vector2(400, -400)],
 		[Vector2(0, 450), Vector2(0, 430)],
 		[Vector2(600, 0), Vector2(580, 0)],
 	]
@@ -65,16 +66,37 @@ func _run() -> void:
 		var expected: Vector2 = item[1]
 		check(player.grapple_target_available and player.grapple_target_position.distance_to(expected) < 0.1, "Aim immediately selects the current mouse ray's hit")
 		check(player.grapple_cursor.visible and player.grapple_cursor.position.distance_to(player.get_canvas_transform() * expected) < 0.1, "Cursor immediately appears at the selected grapple destination")
+		var expected_direction: Vector2 = (player.get_canvas_transform() * expected - player.get_canvas_transform() * player.global_position).normalized()
+		check(player.grapple_direction.visible and player.grapple_direction.can_grapple and Vector2.RIGHT.rotated(player.grapple_direction.rotation).dot(expected_direction) > 0.9999, "Direction arrow immediately marks actual destinations as available, including off-center orb aim")
 		check(player._try_start_grapple() and player.grapple_anchor.distance_to(expected) < 0.1, "Actual grapple launches at exactly the previewed destination")
 		player.grapple_active = true
 		aim(player, Vector2(-600, 0))
 		check(player.grapple_cursor.position.distance_to(player.get_canvas_transform() * expected) < 0.1, "Attached cursor stays at the fixed anchor while the mouse moves")
+		check(not player.grapple_direction.visible, "Direction arrow hides while grappling")
 		player._release_grapple()
 	aim(player, Vector2(-600, 0))
 	check(not player.grapple_cursor.visible, "Cursor immediately disappears when the ray has no target")
+	check(player.grapple_direction.visible and not player.grapple_direction.can_grapple and absf(angle_difference(player.grapple_direction.rotation, PI)) < 0.001, "Direction arrow shows the unavailable marker while aiming without a target")
+	aim(player, Vector2(0, -400))
+	check(not player.grapple_target_available and player.grapple_direction.visible and not player.grapple_direction.can_grapple and absf(angle_difference(player.grapple_direction.rotation, -PI * 0.5)) < 0.001, "Upward empty-space aim remains visible with an unavailable marker")
+	aim(player, player.global_position)
+	check(not player.grapple_direction.visible, "Aiming at the player's center hides an undefined direction")
+	player.show_grapple_cursor = false
+	aim(player, Vector2(600, 0))
+	check(player.grapple_direction.visible and player.grapple_direction.can_grapple and not player.grapple_cursor.visible, "Acquiring a wall target clears the unavailable marker even when the wall cursor is disabled")
 	player.set_controls_locked(true)
 	aim(player, Vector2(600, 0))
 	check(not player.grapple_cursor.visible, "Locked gameplay controls hide the grapple cursor")
+	check(not player.grapple_direction.visible, "Locked gameplay controls hide the grapple direction arrow")
+	player.set_controls_locked(false)
+	wall(world, Vector2(-1800, 0), Vector2(40, 1600))
+	wall(world, Vector2(0, -450), Vector2(1600, 40))
+	await physics_frame
+	await physics_frame
+	aim(player, Vector2(-1800, 0))
+	check(player.grapple_direction.visible and player.grapple_direction.can_grapple and absf(angle_difference(player.grapple_direction.rotation, PI)) < 0.001, "Offscreen grapple destinations are marked as available")
+	aim(player, Vector2(0, -450))
+	check(player.grapple_target_available and player.grapple_target_position.distance_to(Vector2(0, -430)) < 0.1 and player.grapple_direction.visible, "An overhead ceiling shows the actual grapple target and direction")
 	viewport.free()
 	await process_frame
 	print("GRAPPLE AIM: ", checks, " checks, ", failures, " failures")

@@ -19,6 +19,8 @@ func key(shell: Node, code: Key) -> void:
 	shell._unhandled_input(event)
 
 func _run() -> void:
+	# Navigation state is checked synchronously; menu_motion_tests covers timing.
+	preload("res://scripts/ui/menu_slide.gd").duration_scale = 0.0
 	var shell = load("res://scenes/game_shell.tscn").instantiate()
 	root.add_child(shell)
 	await process_frame
@@ -35,7 +37,7 @@ func _run() -> void:
 	check(not paused and shell.world == null, "Title settings does not start or pause gameplay")
 	shell.camera_zoom_slider.value = 0.61
 	shell.wall_cursor_toggle.button_pressed = true
-	shell.settings_dialog.get_cancel_button().pressed.emit()
+	shell.settings_back_button.pressed.emit()
 	await process_frame
 	check(not shell.settings_dialog.visible and not shell.dimmer.visible and not shell.pause_dialog.visible, "Back from title settings restores the main menu")
 	check(shell.title_screen.settings_button.has_focus(), "Closing title settings restores keyboard focus")
@@ -121,9 +123,9 @@ func _run() -> void:
 	shell.title_screen.multiplayer_button.pressed.emit()
 	shell.title_screen.host_button.pressed.emit()
 	check(shell.host_dialog.visible and shell.host_player_limit.value == 4, "Host has initial setup form")
-	check(not shell.host_dialog.get_ok_button().disabled, "Room creation is enabled")
+	check(shell.host_dialog.get_ok_button().disabled, "Room creation requires selecting a level")
 	shell._submit_host()
-	check(shell.host_message.text.contains("MG1-"), "Hosting requires a valid editor level code")
+	check(shell.host_message.text.contains("Choose a saved level"), "Hosting explains the saved and browse level choices")
 	shell.host_dialog.hide()
 	shell.host_dialog.canceled.emit()
 	shell.title_screen.multiplayer_back_button.pressed.emit()

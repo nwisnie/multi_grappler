@@ -12,6 +12,9 @@ const TitleMenuButton := preload("res://scripts/ui/title_menu_button.gd")
 const MenuTheme := preload("res://scripts/ui/menu_theme.gd")
 const LevelBrowser := preload("res://scripts/ui/level_browser.gd")
 const AccountDialog := preload("res://scripts/ui/account_dialog.gd")
+const MenuSlide := preload("res://scripts/ui/menu_slide.gd")
+const MenuBackground := preload("res://scripts/ui/menu_background.gd")
+const SavedLevels := preload("res://scripts/levels/saved_levels.gd")
 
 enum Screen { MAIN_MENU, TUTORIAL, EDITOR, PLAYTEST, MULTIPLAYER, LEVEL_BROWSER, COMMUNITY_LEVEL }
 
@@ -21,8 +24,12 @@ var world: Node
 var editor: GridLevelEditor
 var title_screen: Control
 var level_browser: LevelBrowser
+var saved_levels := SavedLevels.new()
+var browsing_for_host := false
+var active_level_metadata: Dictionary = {}
 var pause_browser_button: Button
 var menu_layer: CanvasLayer
+var menu_background: MenuBackground
 var dimmer: ColorRect
 var join_dialog: ConfirmationDialog
 var room_code: LineEdit
@@ -36,7 +43,14 @@ var host_dialog: ConfirmationDialog
 var host_name: LineEdit
 var host_player_limit: SpinBox
 var host_visibility: Button
-var host_level_code: TextEdit
+var host_level_document: LevelDocument
+var host_level_metadata: Dictionary = {}
+var host_level_label: Label
+var host_saved_button: Button
+var host_browse_button: Button
+var saved_levels_dialog: ConfirmationDialog
+var saved_level_rows: VBoxContainer
+var saved_levels_message: Label
 var host_message: Label
 var session: SessionScript
 var room_card: Control
@@ -51,7 +65,10 @@ var pause_dialog: ConfirmationDialog
 var resume_button: Button
 var pause_editor_button: Button
 var pause_restart_button: Button
+var pause_save_button: Button
+var pause_save_message: Label
 var settings_dialog: ConfirmationDialog
+var settings_back_button: Button
 var account_dialog: AccountDialog
 var account_status: Label
 var account_sign_in: Button
@@ -65,12 +82,16 @@ var resume_waiting_for_release := false
 
 func _ready() -> void:
 	account_session = get_node("/root/AccountSession")
+	saved_levels.load_levels()
 	# UI remains responsive while the gameplay subtree is paused.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	menu_layer = CanvasLayer.new()
 	menu_layer.layer = 40
 	add_child(menu_layer)
+	menu_background = MenuBackground.new()
+	menu_layer.add_child(menu_background)
 	title_screen = TitleScene.instantiate()
+	title_screen.background = menu_background
 	menu_layer.add_child(title_screen)
 	title_screen.tutorial_requested.connect(show_demo)
 	title_screen.editor_requested.connect(show_editor)
@@ -80,10 +101,16 @@ func _ready() -> void:
 	title_screen.settings_requested.connect(show_settings)
 	title_screen.fullscreen_requested.connect(_toggle_fullscreen)
 	level_browser = LevelBrowser.new()
+	level_browser.background = menu_background
+	level_browser.saved_levels = saved_levels
 	menu_layer.add_child(level_browser)
 	level_browser.back_requested.connect(_leave_level_browser)
 	level_browser.play_requested.connect(play_community_level)
+	level_browser.select_requested.connect(_select_host_level)
 	level_browser.hide()
+	title_screen.visibility_changed.connect(_sync_menu_background)
+	level_browser.visibility_changed.connect(_sync_menu_background)
+	_sync_menu_background()
 	dimmer = ColorRect.new()
 	dimmer.color = Color(0.015, 0.035, 0.06, 0.7)
 	menu_layer.add_child(dimmer)
@@ -91,6 +118,7 @@ func _ready() -> void:
 	dimmer.hide()
 	_build_join_menu()
 	_build_host_menu()
+	_build_saved_levels_menu()
 	_build_pause_menu()
 	_build_settings_menu()
 	session = SessionScript.new()
@@ -107,8 +135,14 @@ func _ready() -> void:
 	DialogStyle.apply(session_notice, true)
 	session_notice.get_cancel_button().hide()
 	menu_layer.add_child(session_notice)
+	MenuSlide.install_popup(session_notice)
+	session_notice.dialog_hide_on_ok = false
+	session_notice.confirmed.connect(func() -> void: MenuSlide.dismiss(session_notice))
 	_build_loading_screen()
 	show_main_menu()
+
+func _sync_menu_background() -> void:
+	menu_background.visible = title_screen.visible or level_browser.visible
 
 func _build_loading_screen() -> void:
 	var layer := CanvasLayer.new()
@@ -233,8 +267,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				if event.keycode == KEY_ESCAPE:
 					show_main_menu()
 			elif account_dialog.visible:
-				account_dialog.dismiss()
-				_return_account_settings()
+				MenuSlide.dismiss(account_dialog, func() -> void:
+					account_dialog.dismiss(false)
+					_return_account_settings()
+				)
 			elif settings_dialog.visible:
 				_close_settings()
 			elif pause_dialog.visible:
@@ -242,7 +278,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			elif is_instance_valid(world):
 				pause_game()
 			elif event.keycode == KEY_ESCAPE and level_browser.visible:
-				_leave_level_browser()
+				level_browser.dismiss()
 			elif event.keycode == KEY_ESCAPE and title_screen.visible and (title_screen.multiplayer_actions.visible or title_screen.editor_actions.visible):
 				title_screen.show_main_options()
 			else:
@@ -272,6 +308,7 @@ func _dialog(title: String, cancel_text: String) -> ConfirmationDialog:
 	DialogStyle.apply(dialog, true)
 	dialog.cancel_button_text = cancel_text
 	menu_layer.add_child(dialog)
+	MenuSlide.install_popup(dialog)
 	for button in [dialog.get_ok_button(), dialog.get_cancel_button()]:
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	return dialog
@@ -284,7 +321,7 @@ func _column(dialog: ConfirmationDialog) -> VBoxContainer:
 	return column
 
 func _popup(dialog: ConfirmationDialog) -> void:
-	dialog.popup_centered(Vector2i(420, 0))
+	MenuSlide.popup(dialog, Vector2i(420, 0))
 	if dialog == pause_dialog:
 		resume_button.grab_focus.call_deferred()
 	# Let wrapped labels settle before shrinking away their early minimum height.
@@ -295,7 +332,7 @@ func _fit_popup(dialog: ConfirmationDialog) -> void:
 	await get_tree().process_frame
 	if is_instance_valid(dialog) and dialog.visible:
 		dialog.reset_size()
-		dialog.move_to_center()
+		MenuSlide.recenter(dialog)
 
 func _build_join_menu() -> void:
 	join_dialog = _dialog("Join Game", "Back")
@@ -458,24 +495,99 @@ func _build_host_menu() -> void:
 	host_player_limit.max_value = 8
 	host_player_limit.value = 4
 	column.add_child(host_player_limit)
-	column.add_child(_label("Level code"))
-	host_level_code = TextEdit.new()
-	host_level_code.placeholder_text = "MG1-..."
-	host_level_code.custom_minimum_size = Vector2(380, 90)
-	host_level_code.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	column.add_child(host_level_code)
+	column.add_child(_label("Level"))
+	host_level_label = _label("No level selected")
+	column.add_child(host_level_label)
+	var level_actions := HBoxContainer.new()
+	column.add_child(level_actions)
+	host_saved_button = _button("Select Saved Level", _show_saved_levels)
+	host_browse_button = _button("Browse Levels", _browse_host_levels)
+	for button in [host_saved_button, host_browse_button]:
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		level_actions.add_child(button)
 	host_message = _label("")
 	column.add_child(host_message)
+	_update_host_level()
+
+func _build_saved_levels_menu() -> void:
+	saved_levels_dialog = _dialog("Saved Levels", "Back")
+	saved_levels_dialog.get_ok_button().hide()
+	saved_levels_dialog.canceled.connect(show_host_menu)
+	var column := _column(saved_levels_dialog)
+	saved_levels_message = _label("")
+	column.add_child(saved_levels_message)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size.y = 220
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+	saved_level_rows = VBoxContainer.new()
+	saved_level_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	saved_level_rows.add_theme_constant_override("separation", 8)
+	scroll.add_child(saved_level_rows)
+
+func _show_saved_levels() -> void:
+	MenuSlide.dismiss(host_dialog, func() -> void:
+		for child in saved_level_rows.get_children():
+			saved_level_rows.remove_child(child)
+			child.queue_free()
+		var levels := saved_levels.list_levels()
+		saved_levels_message.text = "Select a saved level to host." if not levels.is_empty() else "No saved levels yet. Browse Levels and choose Save, or save a level from the pause menu."
+		if not saved_levels.load_error.is_empty():
+			saved_levels_message.text = saved_levels.load_error
+		for entry in levels:
+			var caption: String = entry["title"]
+			if not entry["author"].is_empty():
+				caption += " · By " + entry["author"]
+			var button := _button(caption, _choose_saved_level.bind(entry))
+			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			button.clip_text = true
+			button.tooltip_text = caption
+			saved_level_rows.add_child(button)
+		_popup(saved_levels_dialog)
+		if saved_level_rows.get_child_count() > 0:
+			saved_level_rows.get_child(0).grab_focus.call_deferred()
+	)
+
+func _choose_saved_level(entry: Dictionary) -> void:
+	var decoded := LevelCodec.decode_level(entry["level_code"])
+	if not decoded["error"].is_empty():
+		saved_levels_message.text = decoded["error"]
+		return
+	MenuSlide.dismiss(saved_levels_dialog, func() -> void:
+		_select_host_level(decoded["document"], entry)
+	)
+
+func _browse_host_levels() -> void:
+	MenuSlide.dismiss(host_dialog, func() -> void: show_level_browser(true))
+
+func _select_host_level(document: LevelDocument, metadata: Dictionary = {}) -> void:
+	var problem := document.playtest_error()
+	if not problem.is_empty():
+		if browsing_for_host:
+			level_browser.status.text = problem
+		else:
+			host_message.text = problem
+		return
+	host_level_document = document.copy()
+	host_level_metadata = metadata.duplicate(true)
+	_update_host_level()
+	if browsing_for_host:
+		_leave_level_browser()
+	else:
+		show_host_menu()
+
+func _update_host_level() -> void:
+	host_level_label.text = str(host_level_metadata.get("title", "Selected community level")) if host_level_document != null else "No level selected"
+	host_dialog.get_ok_button().disabled = host_level_document == null
 
 func _update_host_visibility() -> void:
 	host_visibility.text = "Public (anyone can join)" if host_visibility.button_pressed else "Private (join by code only)"
 
 func _submit_host() -> void:
-	var decoded := LevelCodec.decode_level(host_level_code.text)
-	if not decoded["error"].is_empty():
-		host_message.text = decoded["error"]
+	if host_level_document == null:
+		host_message.text = "Choose a saved level or browse community levels first."
 		return
-	var document: LevelDocument = decoded["document"]
+	var document := host_level_document.copy()
 	var error := document.playtest_error()
 	if not error.is_empty():
 		host_message.text = error
@@ -488,13 +600,13 @@ func _cancel_connection() -> void:
 	_cancel_lobby_refresh()
 	session.close()
 	dimmer.hide()
-	host_dialog.get_ok_button().disabled = false
+	_update_host_level()
 	_validate_room_code(room_code.text)
 
 func show_host_menu() -> void:
 	dimmer.show()
 	host_message.text = ""
-	host_dialog.get_ok_button().disabled = false
+	_update_host_level()
 	_popup(host_dialog)
 	host_dialog.get_cancel_button().grab_focus.call_deferred()
 
@@ -511,6 +623,11 @@ func _build_pause_menu() -> void:
 	pause_editor_button = _button("Back to Level Editor", show_editor)
 	pause_restart_button = _button("Restart Level", _restart_playtest)
 	pause_browser_button = _button("Back to Browse Levels", show_level_browser)
+	pause_save_button = _button("Save Level", _save_current_level)
+	pause_save_message = _label("")
+	pause_save_message.hide()
+	column.add_child(pause_save_button)
+	column.add_child(pause_save_message)
 	column.add_child(pause_editor_button)
 	column.add_child(pause_browser_button)
 	column.add_child(pause_restart_button)
@@ -518,11 +635,14 @@ func _build_pause_menu() -> void:
 func _build_settings_menu() -> void:
 	settings_dialog = _dialog("Settings", "Back")
 	settings_dialog.get_ok_button().hide()
+	settings_dialog.get_cancel_button().hide()
 	settings_dialog.canceled.connect(_close_settings)
 	var column := _column(settings_dialog)
 	var zoom_label := _label("Camera zoom: %d%%" % roundi(camera_zoom * 100.0))
 	column.add_child(zoom_label)
 	camera_zoom_slider = HSlider.new()
+	camera_zoom_slider.custom_minimum_size.y = 32
+	camera_zoom_slider.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	camera_zoom_slider.min_value = 0.45
 	camera_zoom_slider.max_value = 0.85
 	camera_zoom_slider.step = 0.01
@@ -552,6 +672,11 @@ func _build_settings_menu() -> void:
 	account_sign_out = _button("Sign out", account_session.sign_out)
 	column.add_child(account_sign_in)
 	column.add_child(account_sign_out)
+	var back_row := CenterContainer.new()
+	column.add_child(back_row)
+	settings_back_button = _button("Back", _close_settings)
+	settings_back_button.custom_minimum_size.x = 112
+	back_row.add_child(settings_back_button)
 	account_dialog = AccountDialog.new()
 	account_dialog.light = true
 	menu_layer.add_child(account_dialog)
@@ -570,8 +695,9 @@ func _sync_account_controls() -> void:
 	account_sign_out.disabled = account_session.busy
 
 func _show_account_settings() -> void:
-	settings_dialog.hide()
-	account_dialog.prompt("Sign in or create an account to publish your levels.")
+	MenuSlide.dismiss(settings_dialog, func() -> void:
+		account_dialog.prompt("Sign in or create an account to publish your levels.")
+	)
 
 func _return_account_settings() -> void:
 	_sync_account_controls()
@@ -626,18 +752,41 @@ func pause_game() -> void:
 	pause_editor_button.visible = screen == Screen.PLAYTEST
 	pause_restart_button.visible = screen in [Screen.PLAYTEST, Screen.COMMUNITY_LEVEL]
 	pause_browser_button.visible = screen == Screen.COMMUNITY_LEVEL
+	pause_save_message.hide()
+	pause_save_button.visible = world is CustomLevel
+	if world is CustomLevel:
+		var saved := not saved_levels.find_level(world.document).is_empty()
+		pause_save_button.text = "Level Saved" if saved else "Save Level"
+		pause_save_button.disabled = saved
 	_popup(pause_dialog)
 
+func _save_current_level() -> void:
+	if not world is CustomLevel:
+		return
+	var error := saved_levels.save_level(world.document, active_level_metadata)
+	pause_save_message.text = error if not error.is_empty() else "Level saved! Select it from Saved Levels when hosting a game."
+	pause_save_message.show()
+	if error.is_empty():
+		pause_save_button.text = "Level Saved"
+		pause_save_button.disabled = true
+	_fit_popup.call_deferred(pause_dialog)
+
 func resume_game() -> void:
-	settings_dialog.hide()
-	pause_dialog.hide()
+	var dialog := settings_dialog if settings_dialog.visible else pause_dialog
+	MenuSlide.dismiss(dialog, _finish_resume)
+
+func _finish_resume() -> void:
+	MenuSlide.hide_now(settings_dialog)
+	MenuSlide.hide_now(pause_dialog)
 	dimmer.hide()
 	get_tree().paused = false
 	# A menu click or held Space must not charge an attack or fire a grapple.
 	resume_waiting_for_release = true
 
 func show_settings() -> void:
-	pause_dialog.hide()
+	if pause_dialog.visible:
+		MenuSlide.dismiss(pause_dialog, show_settings)
+		return
 	dimmer.show()
 	_sync_account_controls()
 	_sync_fullscreen_controls()
@@ -645,7 +794,9 @@ func show_settings() -> void:
 	camera_zoom_slider.grab_focus.call_deferred()
 
 func _close_settings() -> void:
-	settings_dialog.hide()
+	MenuSlide.dismiss(settings_dialog, _finish_close_settings)
+
+func _finish_close_settings() -> void:
 	if is_instance_valid(world):
 		_popup(pause_dialog)
 	else:
@@ -654,14 +805,14 @@ func _close_settings() -> void:
 
 func _clear_menus() -> void:
 	_cancel_lobby_refresh()
-	account_dialog.dismiss()
+	account_dialog.dismiss(false)
 	level_browser.close()
 	loading_screen.hide()
 	loading_origin = null
 	get_tree().paused = false
 	resume_waiting_for_release = false
-	for dialog in [pause_dialog, settings_dialog, join_dialog, host_dialog]:
-		dialog.hide()
+	for dialog in [pause_dialog, settings_dialog, join_dialog, host_dialog, saved_levels_dialog]:
+		MenuSlide.hide_now(dialog)
 	dimmer.hide()
 
 func _dispose_world() -> void:
@@ -669,8 +820,10 @@ func _dispose_world() -> void:
 		remove_child(world)
 		world.queue_free()
 	world = null
+	active_level_metadata = {}
 
-func show_main_menu() -> void:
+func show_main_menu(editor_submenu: bool = false) -> void:
+	browsing_for_host = false
 	if is_instance_valid(session):
 		session.close()
 	if is_instance_valid(room_card):
@@ -680,8 +833,15 @@ func show_main_menu() -> void:
 		editor.suspend()
 	_dispose_world()
 	screen = Screen.MAIN_MENU
+	# Select the destination before revealing the title screen, so returning
+	# from the browser never displays or dismisses the main action list.
+	if editor_submenu:
+		title_screen.show_editor_options(false)
+	else:
+		title_screen.show_main_options(false)
 	title_screen.show()
-	title_screen.show_main_options()
+	if editor_submenu:
+		MenuSlide.enter(title_screen.editor_actions)
 
 func show_demo() -> void:
 	_clear_menus()
@@ -708,18 +868,26 @@ func show_editor() -> void:
 	else:
 		editor.resume()
 
-func show_level_browser() -> void:
+func show_level_browser(for_host: bool = false) -> void:
 	_clear_menus()
 	title_screen.hide()
 	if is_instance_valid(editor):
 		editor.suspend()
 	_dispose_world()
 	screen = Screen.LEVEL_BROWSER
-	level_browser.open()
+	browsing_for_host = for_host
+	level_browser.open(for_host)
 
 func _leave_level_browser() -> void:
-	show_main_menu()
-	title_screen.show_editor_options()
+	if browsing_for_host:
+		level_browser.close()
+		browsing_for_host = false
+		screen = Screen.MAIN_MENU
+		title_screen.show_multiplayer_options()
+		title_screen.show()
+		show_host_menu()
+		return
+	show_main_menu(true)
 
 func play_community_level(document: LevelDocument) -> void:
 	var custom: CustomLevel = CustomScene.instantiate()
@@ -734,6 +902,7 @@ func play_community_level(document: LevelDocument) -> void:
 		editor.suspend()
 	_dispose_world()
 	screen = Screen.COMMUNITY_LEVEL
+	active_level_metadata = level_browser.last_level_metadata.duplicate(true)
 	world = custom
 	world.process_mode = Node.PROCESS_MODE_PAUSABLE
 	custom.player_spawned.connect(_apply_player_settings)
@@ -767,7 +936,7 @@ func _network_status(message: String) -> void:
 	if loading_screen.visible:
 		loading_message.text = message
 
-func _start_network_world(code: String, level_code: String, _hosting: bool) -> void:
+func _start_network_world(code: String, level_code: String, hosting: bool) -> void:
 	var decoded := LevelCodec.decode_level(level_code)
 	if not decoded["error"].is_empty():
 		_session_ended("The host supplied an invalid level code: " + decoded["error"])
@@ -786,6 +955,9 @@ func _start_network_world(code: String, level_code: String, _hosting: bool) -> v
 		editor.suspend()
 	_dispose_world()
 	screen = Screen.MULTIPLAYER
+	active_level_metadata = saved_levels.find_level(decoded["document"])
+	if hosting and host_level_document != null and LevelCodec.encode_level(host_level_document) == LevelCodec.encode_level(decoded["document"]):
+		active_level_metadata = host_level_metadata.duplicate(true)
 	world = custom
 	custom.player_spawned.connect(_network_player_spawned)
 	add_child(custom)
@@ -809,11 +981,11 @@ func _session_ended(reason: String) -> void:
 	if screen == Screen.MULTIPLAYER:
 		show_main_menu()
 		session_notice.dialog_text = reason
-		session_notice.popup_centered(Vector2i(480, 0))
+		MenuSlide.popup(session_notice, Vector2i(480, 0))
 	else:
 		join_message.text = reason
 		host_message.text = reason
-		host_dialog.get_ok_button().disabled = false
+		_update_host_level()
 		join_dialog.get_ok_button().disabled = not valid_room_code(room_code.text)
 		if is_instance_valid(origin):
 			dimmer.show()

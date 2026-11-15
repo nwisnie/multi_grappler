@@ -17,7 +17,7 @@ func _ready() -> void:
 		var document := LevelDocument.new()
 		document.spawn = Vector2i(12, 8)
 		document.segments.append({"kind": 0, "a": Vector2i(1, 10), "b": Vector2i(90, 10)})
-		shell.host_level_code.text = LevelCodec.encode_level(document)
+		shell._select_host_level(document, {"title": "Multiplayer test level"})
 		shell._submit_host()
 	else:
 		shell.room_code.text = str(JavaScriptBridge.eval("new URLSearchParams(location.search).get('room') || ''"))

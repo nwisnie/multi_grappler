@@ -4,6 +4,9 @@ extends RefCounted
 const BASE := preload("res://assets/themes/game_theme.tres")
 const CHECKBOX_OFF := preload("res://assets/themes/menu_checkbox_off.svg")
 const CHECKBOX_ON := preload("res://assets/themes/menu_checkbox_on.svg")
+const SLIDER_THUMB := preload("res://assets/themes/menu_slider_thumb.svg")
+const SLIDER_THUMB_HOVER := preload("res://assets/themes/menu_slider_thumb_hover.svg")
+const SLIDER_THUMB_DISABLED := preload("res://assets/themes/menu_slider_thumb_disabled.svg")
 static var cached: Theme
 
 static func get_theme() -> Theme:
@@ -32,6 +35,12 @@ static func get_theme() -> Theme:
 	for key in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
 		theme.set_color(key, "CheckBox", Color.BLACK)
 	theme.set_color("font_disabled_color", "CheckBox", Color("737373"))
+	theme.set_stylebox("slider", "HSlider", _slider_track(Color("909090")))
+	theme.set_stylebox("grabber_area", "HSlider", _slider_track(Color("404040")))
+	theme.set_stylebox("grabber_area_highlight", "HSlider", _slider_track(Color("202020")))
+	theme.set_icon("grabber", "HSlider", SLIDER_THUMB)
+	theme.set_icon("grabber_highlight", "HSlider", SLIDER_THUMB_HOVER)
+	theme.set_icon("grabber_disabled", "HSlider", SLIDER_THUMB_DISABLED)
 	theme.set_icon("unchecked", "CheckBox", CHECKBOX_OFF)
 	theme.set_icon("checked", "CheckBox", CHECKBOX_ON)
 	theme.set_icon("unchecked_disabled", "CheckBox", CHECKBOX_OFF)
@@ -59,6 +68,16 @@ static func get_theme() -> Theme:
 	theme.set_stylebox("panel", "Window", _box())
 	cached = theme
 	return cached
+
+static func _slider_track(color: Color) -> StyleBoxFlat:
+	var track := StyleBoxFlat.new()
+	track.bg_color = color
+	track.border_color = Color("202020")
+	track.set_border_width_all(1)
+	track.set_corner_radius_all(4)
+	track.content_margin_top = 4.0
+	track.content_margin_bottom = 4.0
+	return track
 
 static func _box() -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()

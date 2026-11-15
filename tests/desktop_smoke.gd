@@ -1,10 +1,13 @@
 extends SceneTree
 ## Run with a desktop display driver to inspect real rendered frames.
 
+const MenuSlide := preload("res://scripts/ui/menu_slide.gd")
+
 func _initialize() -> void:
 	_run.call_deferred()
 
 func capture(name: String) -> void:
+	await create_timer(MenuSlide.ENTER_DURATION + MenuSlide.EXIT_DURATION + 0.12).timeout
 	await process_frame
 	await RenderingServer.frame_post_draw
 	var image := root.get_texture().get_image()

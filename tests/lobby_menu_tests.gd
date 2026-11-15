@@ -19,6 +19,7 @@ func check(condition: bool, message: String) -> void:
 		push_error(message)
 
 func _run() -> void:
+	preload("res://scripts/ui/menu_slide.gd").duration_scale = 0.0
 	check(NetworkSession.lobby_list_url("ws://localhost:9080/") == "http://localhost:9080/lobbies", "Local lobby browsing uses HTTP")
 	check(NetworkSession.lobby_list_url("wss://rooms.wizkinews.com") == "https://rooms.wizkinews.com/lobbies", "Public lobby browsing uses HTTPS")
 	check(NetworkSession.lobby_list_url("bad-url").is_empty(), "Invalid lobby directory URL is rejected")
@@ -32,7 +33,7 @@ func _run() -> void:
 	check(not shell.host_visibility.button_pressed and shell.host_visibility.text == "Private (join by code only)", "Host menu defaults to private")
 	var document := LevelDocument.new()
 	document.spawn = Vector2i(12, 8)
-	shell.host_level_code.text = LevelCodec.encode_level(document)
+	shell._select_host_level(document, {"title": "Test lobby level"})
 	shell.host_visibility.button_pressed = true
 	shell.host_visibility.pressed.emit()
 	shell._submit_host()

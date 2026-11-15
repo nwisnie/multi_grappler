@@ -4,6 +4,9 @@ extends Button
 const BORDER_WIDTH := 3.0
 const SLANT := 20.0
 const CORNER_RADIUS := 7.0
+const HOVER_ROTATION := 1.5
+const HOVER_SPEED := 6.0
+const HOVER_SMOOTHING := 12.0
 
 class Face extends Control:
 	var button: Button
@@ -12,6 +15,8 @@ class Face extends Control:
 
 var _face: Face
 var _selection := -1.0
+var _hover_time := 0.0
+var _hover_strength := 0.0
 
 func _ready() -> void:
 	# Draw the face behind the native text; the shared helper still drives hover.
@@ -29,13 +34,33 @@ func _ready() -> void:
 	add_child(_face)
 	_face.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	resized.connect(_face.queue_redraw)
+	resized.connect(_update_pivot)
+	visibility_changed.connect(_reset_wobble)
+	_update_pivot()
 
-func _process(_delta: float) -> void:
+func _update_pivot() -> void:
+	pivot_offset = size * 0.5
+
+func _reset_wobble() -> void:
+	_hover_time = 0.0
+	_hover_strength = 0.0
+	rotation = 0.0
+
+func _process(delta: float) -> void:
+	if not is_visible_in_tree() or not get_window().visible:
+		return
 	var effect := get_node_or_null("MenuSelectionPulse")
 	var selection: float = effect.strength if effect != null and not disabled else 0.0
 	if selection != _selection:
 		_selection = selection
 		_face.queue_redraw()
+	var hovered := is_hovered() and not disabled
+	_hover_strength = lerpf(_hover_strength, 1.0 if hovered else 0.0, 1.0 - exp(-HOVER_SMOOTHING * delta))
+	if not hovered and _hover_strength < 0.001:
+		_reset_wobble()
+		return
+	_hover_time = fposmod(_hover_time + delta * HOVER_SPEED, TAU)
+	rotation = deg_to_rad(HOVER_ROTATION) * sin(_hover_time) * _hover_strength
 
 func _polygon(inset: float) -> PackedVector2Array:
 	var height := maxf(size.y, 1.0)
