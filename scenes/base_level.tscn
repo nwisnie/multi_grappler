@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3 uid="uid://blrwb7ropihy8"]
+[gd_scene load_steps=17 format=3 uid="uid://blrwb7ropihy8"]
 
 [ext_resource type="PackedScene" path="res://scenes/player_ball.tscn" id="1_ball"]
 [ext_resource type="Script" path="res://scripts/editor/level_sketch.gd" id="2_sketch"]
@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://scripts/levels/sky_background.gd" id="7_sky_follow"]
 [ext_resource type="Script" path="res://scripts/levels/tutorial.gd" id="8_tutorial"]
 [ext_resource type="Script" path="res://scripts/levels/tutorial_instruction_area.gd" id="9_instruction_area"]
+[ext_resource type="Script" path="res://scripts/levels/race_checkpoint.gd" id="10_finish"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_instruction"]
 content_margin_top = 14.0
@@ -33,6 +34,10 @@ friction = 1.1
 
 [node name="BaseLevel" type="Node2D"]
 script = ExtResource("8_tutorial")
+
+[node name="FinishCheckpoint" type="Node2D" parent="."]
+position = Vector2(7480, -3100)
+script = ExtResource("10_finish")
 
 [node name="TutorialAreas" type="Node2D" parent="."]
 

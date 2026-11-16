@@ -4,7 +4,7 @@ extends RefCounted
 const RippleOutline := preload("res://scripts/grapple/ripple_outline.gd")
 const OUTLINE_COLOR := Color("18272e")
 const ARROW_LENGTH := 47.0
-const RIPPLE_AMPLITUDE := 1.7
+const RIPPLE_AMPLITUDE := 1.0
 const RIPPLE_SPACING := 2.0
 const RIPPLE_SPEED := 0.5
 

@@ -33,7 +33,7 @@ static func hide_now(target: Node) -> void:
 		effect._set_position(effect._rest)
 	target.hide()
 
-static func install_popup(dialog: ConfirmationDialog) -> void:
+static func install_popup(dialog: ConfirmationDialog, cancellable: bool = true) -> void:
 	if dialog.has_node("MenuSlide"):
 		return
 	var effect = _effect(dialog)
@@ -43,11 +43,13 @@ static func install_popup(dialog: ConfirmationDialog) -> void:
 	var cancel := dialog.get_cancel_button()
 	for connection in cancel.pressed.get_connections():
 		cancel.pressed.disconnect(connection.callable)
-	cancel.pressed.connect(effect._cancel_popup)
+	if cancellable:
+		cancel.pressed.connect(effect._cancel_popup)
 	for connection in dialog.close_requested.get_connections():
 		dialog.close_requested.disconnect(connection.callable)
-	dialog.close_requested.connect(effect._cancel_popup)
-	dialog.window_input.connect(effect._window_input)
+	if cancellable:
+		dialog.close_requested.connect(effect._cancel_popup)
+		dialog.window_input.connect(effect._window_input)
 	dialog.visibility_changed.connect(effect._popup_visibility_changed)
 
 static func popup(dialog: ConfirmationDialog, minimum_size: Vector2i) -> void:

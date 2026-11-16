@@ -16,12 +16,18 @@ publish a playable level with **Upload** inside the editor, then browse and play
 community levels. Published levels are stored in Cloudflare D1, with a global maximum
 of 100. Once full, the library rejects new uploads and preserves existing levels.
 
-Choose **Save** next to a community level's **Play** button, or **Save Level** in
-the pause menu, to keep a playable copy on this device or browser. **Host Game**
-offers **Select Saved Level** (available without the level library) and **Browse
-Levels** to choose a community level for the lobby. Selecting a level returns to
-the host form and keeps the game name, visibility, and player limit. Saved levels
-persist between sessions without requiring an account.
+Sign in and choose **Save** next to a community level's **Play** button, or
+**Save Level** in the pause menu, to keep a playable copy on this device or browser. Saved levels
+move out of the community list and into **Saved Levels**, available at the top
+right of the browser. **My Levels** lists levels published by the signed-in
+account. Both views support playing, and saved copies need no library download
+while signed in. **Host Game** offers **Browse Levels**, **Saved Levels**, and **My Levels**
+to select a lobby level. Selecting a level returns to the host form and keeps
+the game name, visibility, and player limit. Saves persist locally for each account;
+signing out hides them, and signing back into the same account restores them.
+Earlier device saves can be brought into the signed-in account with **Import earlier
+saved levels** in Saved Levels. Browsing, playing community levels, and multiplayer
+remain available while signed out.
 
 Uploading requires a username/password account. **Settings** provides **Sign in /
 Create account** and **Sign out**. Choosing **Upload** while signed out opens the same

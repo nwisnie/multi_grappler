@@ -28,6 +28,9 @@ func check(condition: bool, message: String) -> void:
 
 func _run() -> void:
 	preload("res://scripts/ui/menu_slide.gd").duration_scale = 0.0
+	ProjectSettings.set_setting("network/level_library_url", "http://127.0.0.1:9080/levels")
+	var account := root.get_node("AccountSession")
+	account._apply_session({"user": {"id": "saved-test-user", "username": "Tester"}, "token": "b".repeat(64), "expires_at": (Time.get_unix_time_from_system() + 3600) * 1000})
 	DirAccess.remove_absolute(TEST_PATH)
 	var store := SavedLevels.new(TEST_PATH)
 	var shell = load("res://scenes/game_shell.tscn").instantiate()
@@ -59,8 +62,8 @@ func _run() -> void:
 	shell.show_host_menu()
 	check(shell.host_dialog.get_ok_button().disabled, "Hosting requires an explicit level selection")
 	shell.host_saved_button.pressed.emit()
-	check(shell.saved_levels_dialog.visible and shell.saved_level_rows.get_child_count() == 0 and shell.saved_levels_message.text.contains("No saved"), "Saved picker explains how to save a first level")
-	shell.saved_levels_dialog.get_cancel_button().pressed.emit()
+	check(browser.visible and browser.current_view == browser.View.SAVED and browser.rows.get_child_count() == 0 and browser.status.text.contains("No saved"), "Saved view explains how to save a first level")
+	browser.back_button.pressed.emit()
 	check(shell.host_dialog.visible and shell.dimmer.visible, "Back from saved picker returns to the host form")
 
 	shell.show_level_browser()
@@ -71,8 +74,11 @@ func _run() -> void:
 	client.completed.emit(200, level, "")
 	check(shell.screen == shell.Screen.LEVEL_BROWSER and shell.world == null, "Saving keeps the player in the browser")
 	check(store.list_levels().size() == 1 and browser.status.text.contains("saved"), "Saving records a playable snapshot and confirms success")
-	check(browser.save_buttons[id].text == "Saved" and browser.save_buttons[id].disabled and not browser.play_buttons[0].disabled, "Saved row status prevents duplicate clicks while Play remains available")
+	check(not browser.save_buttons.has(id) and browser.rows.get_child_count() == 0, "Saving immediately removes the row from the community list")
+	browser.saved_button.pressed.emit()
+	check(browser.rows.get_child_count() == 1 and browser.save_buttons.is_empty() and not browser.play_buttons[0].disabled, "Saved view lists the local copy with Play and no duplicate Save action")
 	var reopened := SavedLevels.new(TEST_PATH)
+	reopened.bind_account(account)
 	reopened.load_levels()
 	check(reopened.list_levels().size() == 1 and reopened.list_levels()[0]["level_code"] == code, "Saved terrain and race data survive reloading the file")
 	check(reopened.list_levels()[0]["title"] == metadata["title"] and reopened.list_levels()[0]["author"] == "Tester", "Published names and authors survive reloading")
@@ -85,9 +91,9 @@ func _run() -> void:
 	shell.host_visibility.button_pressed = true
 	shell.host_visibility.pressed.emit()
 	shell.host_saved_button.pressed.emit()
-	check(shell.saved_level_rows.get_child_count() == 1 and shell.saved_level_rows.get_child(0).text.contains(metadata["title"]), "Host picker lists saved levels with their names")
-	shell.saved_level_rows.get_child(0).pressed.emit()
-	check(shell.host_dialog.visible and not shell.saved_levels_dialog.visible and shell.host_level_label.text == metadata["title"], "Choosing a saved level returns to Host with its title")
+	check(browser.rows.get_child_count() == 1 and browser.entries.values()[0]["title"] == metadata["title"], "Host saved view lists saved levels with their names")
+	browser.play_buttons[0].pressed.emit()
+	check(shell.host_dialog.visible and not browser.visible and shell.host_level_label.text == metadata["title"], "Choosing a saved level returns to Host with its title")
 	check(not shell.host_dialog.get_ok_button().disabled, "Saved selection enables room creation")
 	shell._submit_host()
 	check(session.request == {"level_code": code, "max_players": 7, "name": "Friday race", "public": true}, "Hosting uses the saved snapshot and current lobby settings without a library download")
@@ -97,7 +103,9 @@ func _run() -> void:
 	shell.host_browse_button.pressed.emit()
 	check(shell.browsing_for_host and browser.visible and not shell.host_dialog.visible, "Host Browse opens the community browser in selection mode")
 	client.completed.emit(200, {"levels": [metadata]}, "")
-	check(browser.play_buttons[0].text == "Select" and browser.save_buttons[id].text == "Saved", "Host browsing offers Select and reflects the saved state")
+	check(browser.rows.get_child_count() == 0 and browser.saved_button.visible, "Host community browsing hides saved levels and offers the saved view")
+	browser.saved_button.pressed.emit()
+	check(browser.play_buttons[0].text == "Select" and browser.save_buttons.is_empty(), "Host saved view selects local levels without a duplicate Save action")
 	browser.back_button.pressed.emit()
 	check(shell.host_dialog.visible and not browser.visible and shell.host_name.text == "Friday race" and shell.host_player_limit.value == 7 and shell.host_visibility.button_pressed, "Browser Back restores the host form and lobby settings")
 	check(LevelCodec.encode_level(shell.host_level_document) == code, "Canceling host browsing preserves the previous level")
@@ -136,7 +144,7 @@ func _run() -> void:
 	check(shell.pause_dialog.size.y < root.get_visible_rect().size.y, "Pause menu fits the viewport after save feedback")
 	shell.pause_browser_button.pressed.emit()
 	client.completed.emit(200, {"levels": [second_metadata]}, "")
-	check(not paused and browser.save_buttons[second_id].text == "Saved", "Returning from gameplay shows the updated saved state")
+	check(not paused and not browser.save_buttons.has(second_id) and browser.rows.get_child_count() == 0, "Returning from gameplay hides the newly saved community level")
 
 	# Failed downloads and writes must never create an unusable saved entry.
 	var third_id := "c".repeat(64)
@@ -154,6 +162,7 @@ func _run() -> void:
 	var invalid := LevelDocument.new()
 	check(not store.save_level(invalid).is_empty() and store.list_levels().size() == 2, "Unplayable documents cannot be saved")
 	var blocked_store := SavedLevels.new("res://build/missing-saved-level-directory/levels.json")
+	blocked_store.bind_account(account)
 	check(not blocked_store.save_level(document).is_empty() and blocked_store.list_levels().is_empty(), "Write failures do not report success or change the saved collection")
 
 	# Joined multiplayer levels use the same portable document as solo levels.
@@ -200,8 +209,9 @@ func _run() -> void:
 	root.add_child(fresh_shell)
 	fresh_shell.show_host_menu()
 	fresh_shell.host_saved_button.pressed.emit()
-	check(fresh_shell.saved_level_rows.get_child_count() == 4, "A fresh game session lists previously saved levels for hosting")
+	check(fresh_shell.level_browser.rows.get_child_count() == 4, "A fresh game session lists previously saved levels for hosting")
 	fresh_shell.free()
+	account.invalidate()
 	await process_frame
 	DirAccess.remove_absolute(TEST_PATH)
 	print("SAVED LEVELS: ", checks, " checks, ", failures, " failures")

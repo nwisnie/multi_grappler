@@ -46,7 +46,7 @@ function upload(mf, levelCode = playable(), extra = {}) {
 }
 
 test("publish, browse newest metadata, download exact level, and retry idempotently", async t => {
-  const { mf } = await runtime(t);
+  const { mf, db } = await runtime(t);
   const empty = await mf.dispatchFetch("https://rooms.example/levels");
   assert.deepEqual(await empty.json(), { levels: [], capacity: 100 });
   const published = await upload(mf);
@@ -65,10 +65,14 @@ test("publish, browse newest metadata, download exact level, and retry idempoten
   assert.equal(list.levels.length, 2);
   assert.equal(list.levels[0].title, "Second course");
   assert.equal(list.levels[0].author, "Creator");
+  const creatorId = await db.prepare("SELECT id FROM users WHERE username = 'Creator'").first("id");
+  assert.equal(list.levels[0].author_id, creatorId);
+  assert.equal(list.levels[1].author_id, creatorId);
   assert.equal(list.levels[1].title, "First course");
   assert.equal("level_code" in list.levels[0], false);
   const level = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}`)).json();
   assert.equal(level.level.level_code, playable());
+  assert.equal(level.level.author_id, creatorId);
   assert.equal((await mf.dispatchFetch("https://rooms.example/levels/" + "0".repeat(64))).status, 404);
 });
 

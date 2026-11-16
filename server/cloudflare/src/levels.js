@@ -139,10 +139,10 @@ export async function levels(request, env) {
   try {
     if (request.method === "GET") {
       if (collection) {
-        const { results } = await env.LEVELS_DB.prepare("SELECT id, title, author, created_at FROM levels ORDER BY created_at DESC, id LIMIT 100").all();
+        const { results } = await env.LEVELS_DB.prepare("SELECT id, title, author, author_id, created_at FROM levels ORDER BY created_at DESC, id LIMIT 100").all();
         return json({ levels: results, capacity: MAX_LEVELS });
       }
-      const level = await env.LEVELS_DB.prepare("SELECT id, title, author, created_at, level_code FROM levels WHERE id = ?").bind(match[1]).first();
+      const level = await env.LEVELS_DB.prepare("SELECT id, title, author, author_id, created_at, level_code FROM levels WHERE id = ?").bind(match[1]).first();
       return level ? json({ level }) : json({ error: "This level is no longer available. Refresh the library." }, 404);
     }
     const user = await requireUser(request, env);

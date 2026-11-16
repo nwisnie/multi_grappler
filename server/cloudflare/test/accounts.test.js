@@ -86,6 +86,8 @@ test("upload requires a real session and derives attribution from the account", 
   const summaries = await (await call(mf, "/levels")).json();
   assert.equal(summaries.levels.length, 2);
   assert.equal(summaries.levels[1].author, "Legacy creator");
+  assert.equal(summaries.levels[0].author_id, account.user.id);
+  assert.equal(summaries.levels[1].author_id, null);
   assert.equal(await db.prepare("SELECT author_id FROM levels WHERE title = 'Legacy course'").first("author_id"), null);
   assert.equal((await call(mf, "/levels/" + id)).status, 200);
   const stored = await db.prepare("SELECT token_hash FROM account_sessions WHERE user_id = ?").bind(account.user.id).first();

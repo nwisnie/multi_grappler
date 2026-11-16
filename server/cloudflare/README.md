@@ -9,7 +9,10 @@ Both kinds of room still accept the eight-digit code.
 
 The same Worker serves a public level library backed by **D1**. Main menu →
 **Level Editor** now offers **Browse Levels** or **Create New**. Browse Levels lists
-published courses newest first and lets players play them. Create New opens the existing
+published courses newest first and lets players play them or sign in to save them.
+Saved courses move to **Saved Levels**, stored locally per account and hidden after
+sign-out. **My Levels** filters publications by the signed-in account.
+These views are also available when choosing a level in **Host Game**. Create New opens the existing
 editor, preserving any draft from this session. In the editor, **Upload** opens
 a level name form and shows the signed-in username. Uploading requires a playable spawn
 and a username/password account. Settings offers sign-in, account creation, and sign-out;
@@ -92,8 +95,9 @@ complete `/levels` URL. The HTML setting takes precedence. The Worker uses the s
 
 ## Level library behavior
 
-- `GET /levels`: up to 100 level summaries (`id`, `title`, `author`, `created_at`),
-  newest first. Codes are fetched only when a player selects Play.
+- `GET /levels`: up to 100 level summaries (`id`, `title`, `author`, `author_id`,
+  `created_at`), newest first. Codes are fetched when a player chooses Play, Save,
+  or Select; saved copies can be played or selected locally.
 - `GET /levels/:id`: metadata and the exact portable `MG1-` code.
 - `POST /levels`: JSON `{ "title": "Course", "level_code": "MG1-..." }` with an
   `Authorization: Bearer <session-token>` header. Level names are limited to 64 characters.
@@ -101,6 +105,11 @@ complete `/levels` URL. The HTML setting takes precedence. The Worker uses the s
   cannot claim another creator name. Missing, expired, and revoked sessions return `401`.
   Returns `201` for a publication, `200` with `duplicate: true` for a retry of an
   existing level, or `409` when all 100 slots are occupied.
+
+Deploy the Worker alongside the updated game so **My Levels** receives creator IDs.
+The existing accounts migration already stores these IDs; no new migration is needed.
+Legacy publications without an account have `author_id: null` and are not claimed by
+accounts with matching display names.
 
 The **100-level cap is global**, enforced by an atomic SQL insert and a database
 trigger. A full library rejects new levels and preserves everything already stored;

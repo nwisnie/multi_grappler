@@ -19,6 +19,7 @@ const SavedLevels := preload("res://scripts/levels/saved_levels.gd")
 enum Screen { MAIN_MENU, TUTORIAL, EDITOR, PLAYTEST, MULTIPLAYER, LEVEL_BROWSER, COMMUNITY_LEVEL }
 
 var account_session: Node
+var account_from_pause := false
 var screen: int = Screen.MAIN_MENU
 var world: Node
 var editor: GridLevelEditor
@@ -27,6 +28,7 @@ var level_browser: LevelBrowser
 var saved_levels := SavedLevels.new()
 var browsing_for_host := false
 var active_level_metadata: Dictionary = {}
+var return_browser_view: int = LevelBrowser.View.COMMUNITY
 var pause_browser_button: Button
 var menu_layer: CanvasLayer
 var menu_background: MenuBackground
@@ -48,9 +50,7 @@ var host_level_metadata: Dictionary = {}
 var host_level_label: Label
 var host_saved_button: Button
 var host_browse_button: Button
-var saved_levels_dialog: ConfirmationDialog
-var saved_level_rows: VBoxContainer
-var saved_levels_message: Label
+var host_my_levels_button: Button
 var host_message: Label
 var session: SessionScript
 var room_card: Control
@@ -62,6 +62,9 @@ var loading_message: Label
 var loading_origin: ConfirmationDialog
 var loading_elapsed := 0.0
 var pause_dialog: ConfirmationDialog
+var tutorial_complete_dialog: ConfirmationDialog
+var tutorial_menu_button: Button
+var tutorial_restart_button: Button
 var resume_button: Button
 var pause_editor_button: Button
 var pause_restart_button: Button
@@ -82,6 +85,7 @@ var resume_waiting_for_release := false
 
 func _ready() -> void:
 	account_session = get_node("/root/AccountSession")
+	saved_levels.bind_account(account_session)
 	saved_levels.load_levels()
 	# UI remains responsive while the gameplay subtree is paused.
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -107,6 +111,7 @@ func _ready() -> void:
 	level_browser.back_requested.connect(_leave_level_browser)
 	level_browser.play_requested.connect(play_community_level)
 	level_browser.select_requested.connect(_select_host_level)
+	level_browser.sign_in_requested.connect(_show_browser_account)
 	level_browser.hide()
 	title_screen.visibility_changed.connect(_sync_menu_background)
 	level_browser.visibility_changed.connect(_sync_menu_background)
@@ -118,8 +123,9 @@ func _ready() -> void:
 	dimmer.hide()
 	_build_join_menu()
 	_build_host_menu()
-	_build_saved_levels_menu()
 	_build_pause_menu()
+	_build_tutorial_complete_menu()
+	saved_levels.changed.connect(_sync_pause_save_button)
 	_build_settings_menu()
 	session = SessionScript.new()
 	session.name = "NetworkSession"
@@ -263,7 +269,10 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE or event.keycode == KEY_P:
-			if loading_screen.visible:
+			if tutorial_complete_dialog.visible:
+				# Completion requires choosing a destination; keep gameplay paused.
+				pass
+			elif loading_screen.visible:
 				if event.keycode == KEY_ESCAPE:
 					show_main_menu()
 			elif account_dialog.visible:
@@ -301,14 +310,14 @@ func _label(text: String) -> Label:
 	label.custom_minimum_size.x = 380
 	return label
 
-func _dialog(title: String, cancel_text: String) -> ConfirmationDialog:
+func _dialog(title: String, cancel_text: String, cancellable: bool = true) -> ConfirmationDialog:
 	var dialog := ConfirmationDialog.new()
 	dialog.title = title
 	dialog.exclusive = true
 	DialogStyle.apply(dialog, true)
 	dialog.cancel_button_text = cancel_text
 	menu_layer.add_child(dialog)
-	MenuSlide.install_popup(dialog)
+	MenuSlide.install_popup(dialog, cancellable)
 	for button in [dialog.get_ok_button(), dialog.get_cancel_button()]:
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	return dialog
@@ -500,65 +509,18 @@ func _build_host_menu() -> void:
 	column.add_child(host_level_label)
 	var level_actions := HBoxContainer.new()
 	column.add_child(level_actions)
-	host_saved_button = _button("Select Saved Level", _show_saved_levels)
+	host_saved_button = _button("Saved Levels", _browse_host_levels.bind(LevelBrowser.View.SAVED))
 	host_browse_button = _button("Browse Levels", _browse_host_levels)
-	for button in [host_saved_button, host_browse_button]:
+	host_my_levels_button = _button("My Levels", _browse_host_levels.bind(LevelBrowser.View.MY_LEVELS))
+	for button in [host_browse_button, host_saved_button, host_my_levels_button]:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		level_actions.add_child(button)
 	host_message = _label("")
 	column.add_child(host_message)
 	_update_host_level()
 
-func _build_saved_levels_menu() -> void:
-	saved_levels_dialog = _dialog("Saved Levels", "Back")
-	saved_levels_dialog.get_ok_button().hide()
-	saved_levels_dialog.canceled.connect(show_host_menu)
-	var column := _column(saved_levels_dialog)
-	saved_levels_message = _label("")
-	column.add_child(saved_levels_message)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size.y = 220
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	column.add_child(scroll)
-	saved_level_rows = VBoxContainer.new()
-	saved_level_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	saved_level_rows.add_theme_constant_override("separation", 8)
-	scroll.add_child(saved_level_rows)
-
-func _show_saved_levels() -> void:
-	MenuSlide.dismiss(host_dialog, func() -> void:
-		for child in saved_level_rows.get_children():
-			saved_level_rows.remove_child(child)
-			child.queue_free()
-		var levels := saved_levels.list_levels()
-		saved_levels_message.text = "Select a saved level to host." if not levels.is_empty() else "No saved levels yet. Browse Levels and choose Save, or save a level from the pause menu."
-		if not saved_levels.load_error.is_empty():
-			saved_levels_message.text = saved_levels.load_error
-		for entry in levels:
-			var caption: String = entry["title"]
-			if not entry["author"].is_empty():
-				caption += " · By " + entry["author"]
-			var button := _button(caption, _choose_saved_level.bind(entry))
-			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			button.clip_text = true
-			button.tooltip_text = caption
-			saved_level_rows.add_child(button)
-		_popup(saved_levels_dialog)
-		if saved_level_rows.get_child_count() > 0:
-			saved_level_rows.get_child(0).grab_focus.call_deferred()
-	)
-
-func _choose_saved_level(entry: Dictionary) -> void:
-	var decoded := LevelCodec.decode_level(entry["level_code"])
-	if not decoded["error"].is_empty():
-		saved_levels_message.text = decoded["error"]
-		return
-	MenuSlide.dismiss(saved_levels_dialog, func() -> void:
-		_select_host_level(decoded["document"], entry)
-	)
-
-func _browse_host_levels() -> void:
-	MenuSlide.dismiss(host_dialog, func() -> void: show_level_browser(true))
+func _browse_host_levels(view: int = LevelBrowser.View.COMMUNITY) -> void:
+	MenuSlide.dismiss(host_dialog, func() -> void: show_level_browser(true, view))
 
 func _select_host_level(document: LevelDocument, metadata: Dictionary = {}) -> void:
 	var problem := document.playtest_error()
@@ -622,7 +584,7 @@ func _build_pause_menu() -> void:
 	column.add_child(_button("Settings", show_settings))
 	pause_editor_button = _button("Back to Level Editor", show_editor)
 	pause_restart_button = _button("Restart Level", _restart_playtest)
-	pause_browser_button = _button("Back to Browse Levels", show_level_browser)
+	pause_browser_button = _button("Back to Browse Levels", _return_to_level_browser)
 	pause_save_button = _button("Save Level", _save_current_level)
 	pause_save_message = _label("")
 	pause_save_message.hide()
@@ -631,6 +593,25 @@ func _build_pause_menu() -> void:
 	column.add_child(pause_editor_button)
 	column.add_child(pause_browser_button)
 	column.add_child(pause_restart_button)
+
+func _build_tutorial_complete_menu() -> void:
+	tutorial_complete_dialog = _dialog("Tutorial Complete!", "", false)
+	tutorial_complete_dialog.get_ok_button().hide()
+	tutorial_complete_dialog.get_cancel_button().hide()
+	var column := _column(tutorial_complete_dialog)
+	tutorial_menu_button = _button("Return to Main Menu", show_main_menu)
+	tutorial_restart_button = _button("Restart Tutorial", show_demo)
+	column.add_child(tutorial_menu_button)
+	column.add_child(tutorial_restart_button)
+
+func _show_tutorial_complete() -> void:
+	if screen != Screen.TUTORIAL or not is_instance_valid(world) or not world.finished:
+		return
+	resume_waiting_for_release = false
+	get_tree().paused = true
+	dimmer.show()
+	_popup(tutorial_complete_dialog)
+	tutorial_menu_button.grab_focus.call_deferred()
 
 func _build_settings_menu() -> void:
 	settings_dialog = _dialog("Settings", "Back")
@@ -696,13 +677,26 @@ func _sync_account_controls() -> void:
 	account_sign_out.disabled = account_session.busy
 
 func _show_account_settings() -> void:
+	account_from_pause = false
 	MenuSlide.dismiss(settings_dialog, func() -> void:
 		account_dialog.prompt("Sign in or create an account to publish your levels.")
 	)
 
 func _return_account_settings() -> void:
 	_sync_account_controls()
+	if account_from_pause:
+		account_from_pause = false
+		pause_game()
+		return
+	if level_browser.visible:
+		dimmer.hide()
+		return
 	_popup(settings_dialog)
+
+func _show_browser_account() -> void:
+	account_from_pause = false
+	dimmer.show()
+	account_dialog.prompt("Sign in or create an account to save levels and view your saved or published levels.")
 
 func _account_operation_completed(action: String, error: String) -> void:
 	if action == "logout" and not error.is_empty():
@@ -740,7 +734,7 @@ func _apply_player_settings(player: RigidBody2D) -> void:
 			player.set_controls_locked(true)
 
 func pause_game() -> void:
-	if not is_instance_valid(world):
+	if not is_instance_valid(world) or tutorial_complete_dialog.visible:
 		return
 	var player := _player()
 	if player != null:
@@ -753,16 +747,26 @@ func pause_game() -> void:
 	pause_editor_button.visible = screen == Screen.PLAYTEST
 	pause_restart_button.visible = screen in [Screen.PLAYTEST, Screen.COMMUNITY_LEVEL]
 	pause_browser_button.visible = screen == Screen.COMMUNITY_LEVEL
+	pause_browser_button.text = "Back to " + LevelBrowser.view_title(return_browser_view)
+	_sync_pause_save_button()
+	_popup(pause_dialog)
+
+func _sync_pause_save_button() -> void:
 	pause_save_message.hide()
-	pause_save_button.visible = world is CustomLevel
-	if world is CustomLevel:
+	pause_save_button.visible = is_instance_valid(world) and world is CustomLevel
+	if pause_save_button.visible:
 		var saved := not saved_levels.find_level(world.document).is_empty()
 		pause_save_button.text = "Level Saved" if saved else "Save Level"
 		pause_save_button.disabled = saved
-	_popup(pause_dialog)
 
 func _save_current_level() -> void:
 	if not world is CustomLevel:
+		return
+	if not account_session.is_signed_in():
+		account_from_pause = true
+		MenuSlide.dismiss(pause_dialog, func() -> void:
+			account_dialog.prompt("Sign in or create an account to save this level.")
+		)
 		return
 	var error := saved_levels.save_level(world.document, active_level_metadata)
 	pause_save_message.text = error if not error.is_empty() else "Level saved! Select it from Saved Levels when hosting a game."
@@ -805,6 +809,7 @@ func _finish_close_settings() -> void:
 		title_screen.settings_button.grab_focus.call_deferred()
 
 func _clear_menus() -> void:
+	account_from_pause = false
 	_cancel_lobby_refresh()
 	account_dialog.dismiss(false)
 	level_browser.close()
@@ -812,7 +817,7 @@ func _clear_menus() -> void:
 	loading_origin = null
 	get_tree().paused = false
 	resume_waiting_for_release = false
-	for dialog in [pause_dialog, settings_dialog, join_dialog, host_dialog, saved_levels_dialog]:
+	for dialog in [pause_dialog, tutorial_complete_dialog, settings_dialog, join_dialog, host_dialog]:
 		MenuSlide.hide_now(dialog)
 	dimmer.hide()
 
@@ -853,6 +858,7 @@ func show_demo() -> void:
 	screen = Screen.TUTORIAL
 	world = DemoScene.instantiate()
 	world.process_mode = Node.PROCESS_MODE_PAUSABLE
+	world.completed.connect(_show_tutorial_complete, CONNECT_DEFERRED)
 	add_child(world)
 	_apply_player_settings(_player())
 
@@ -869,7 +875,7 @@ func show_editor() -> void:
 	else:
 		editor.resume()
 
-func show_level_browser(for_host: bool = false) -> void:
+func show_level_browser(for_host: bool = false, view: int = LevelBrowser.View.COMMUNITY) -> void:
 	_clear_menus()
 	title_screen.hide()
 	if is_instance_valid(editor):
@@ -877,7 +883,10 @@ func show_level_browser(for_host: bool = false) -> void:
 	_dispose_world()
 	screen = Screen.LEVEL_BROWSER
 	browsing_for_host = for_host
-	level_browser.open(for_host)
+	level_browser.open(for_host, view)
+
+func _return_to_level_browser() -> void:
+	show_level_browser(false, return_browser_view)
 
 func _leave_level_browser() -> void:
 	if browsing_for_host:
@@ -897,6 +906,7 @@ func play_community_level(document: LevelDocument) -> void:
 		custom.free()
 		level_browser.status.text = error
 		return
+	return_browser_view = level_browser.current_view
 	_clear_menus()
 	title_screen.hide()
 	if is_instance_valid(editor):
