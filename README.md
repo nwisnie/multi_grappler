@@ -4,6 +4,13 @@ My attempt at making a web-game game with basic mutliplayer using the Godot engi
 
 This game has a level editor and basic mutliplayer for 2-8 players using WebRTC
 
+In the level editor, **Race checkpoint** lets you choose **Hoop** or **Line**.
+Click an existing checkpoint to change its shape, order, or finish status. New
+lines use two cell centers; **Set endpoints** replaces those points, and **Select**
+lets you drag either endpoint or move the whole line. **Spawn** also supports
+lines: **Spawn on line** sets the player's starting position from endpoint A (0%)
+to endpoint B (100%). Lines count ball contact anywhere along their finite length.
+
 **Level Editor** opens a submenu with **Browse Levels** and **Create New**. Players can
 publish a playable level with **Upload** inside the editor, then browse and play
 community levels. Published levels are stored in Cloudflare D1, with a global maximum

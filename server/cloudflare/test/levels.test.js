@@ -135,3 +135,49 @@ test("accept maximum-size Godot payload and reject curves outside the board", as
   const overshoot = encode([1, 1, 0, 0, 10, 2, 1, 0, 0, 100, 0, 1, 1]);
   assert.equal((await upload(mf, overshoot)).status, 400);
 });
+
+test("publish and download mixed checkpoint lines with a chosen spawn position", async t => {
+  const { mf } = await runtime(t);
+  const code = encode([1, 0, 0, 0, 10, 10, 82, 2, 3, 1, 20, 10, 30, 10,
+    76, 2, 25, 1, 10, 6, 10, 14, 2, 20, 5, 20, 15]);
+  const response = await upload(mf, code);
+  assert.equal(response.status, 201, await response.clone().text());
+  const { id } = await response.json();
+  const downloaded = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}`)).json();
+  assert.equal(downloaded.level.level_code, code);
+  const spawnOnly = encode([1, 0, 0, 0, 10, 10, 82, 0, 1, 1, 76, 1, 50, 1, 5, 10, 15, 10]);
+  assert.equal((await upload(mf, spawnOnly)).status, 201);
+});
+
+test("reject malformed checkpoint lines and check terrain at the actual line spawn", async t => {
+  const { mf } = await runtime(t);
+  const base = [1, 0, 0, 0, 10, 10, 82, 1, 1, 1, 20, 10];
+  for (const trailer of [
+    [76], [76, 0, 50], [76, 1, 101, 2, 20, 5, 20, 15],
+    [76, 1, 50, 0, 20, 5, 20, 15], [76, 1, 50, 3, 20, 5, 20, 15],
+    [76, 1, 50, 2, 100, 5, 20, 15], [76, 1, 50, 2, 20, 5, 20, 5],
+    [76, 2, 50, 2, 20, 5, 20, 15, 2, 25, 5, 25, 15],
+    [76, 1, 50, 2, 20, 5, 20, 15, 0],
+  ]) {
+    assert.equal((await upload(mf, encode([...base, ...trailer]))).status, 400, JSON.stringify(trailer));
+  }
+  const lineSpawn = (terrainY, percent) => encode([1, 1, 0, 0, 10, 10, 0, 5, terrainY, 15, terrainY,
+    82, 0, 1, 1, 76, 1, percent, 1, 10, 2, 10, 18]);
+  assert.equal((await upload(mf, lineSpawn(10, 0))).status, 201, "Line may cross terrain away from the spawn point");
+  assert.equal((await upload(mf, lineSpawn(10, 50))).status, 400, "Midpoint spawn intersects terrain");
+  assert.equal((await upload(mf, lineSpawn(2, 0))).status, 400, "Endpoint spawn intersects terrain even though the center is clear");
+  assert.equal((await upload(mf, lineSpawn(10, 100))).status, 201, "Spawn can use endpoint B");
+});
+
+test("accept maximum terrain, orbs and all 129 checkpoint lines", async t => {
+  const { mf } = await runtime(t);
+  const bytes = [1, 0, 4, 128, 10, 2];
+  for (let index = 0; index < 1024; index++) bytes.push(1, 1, 30, 3, 30, 2, 29);
+  for (let index = 0; index < 128; index++) bytes.push(index % 100, 50 + Math.floor(index / 100));
+  bytes.push(82, 128, 50, 1);
+  for (let index = 0; index < 128; index++) bytes.push(index % 100, 60 + Math.floor(index / 100));
+  bytes.push(76, 129, 50, 1, 10, 1, 10, 3);
+  for (let index = 0; index < 128; index++) bytes.push(index + 2, index % 100, 60, index % 100, 62);
+  const response = await upload(mf, encode(bytes));
+  assert.equal(response.status, 201, await response.clone().text());
+});

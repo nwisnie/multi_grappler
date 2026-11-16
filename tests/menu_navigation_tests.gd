@@ -26,6 +26,7 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	check(shell.title_screen.visible and shell.world == null, "Start on title, without running tutorial")
+	check(is_equal_approx(shell.camera_zoom, 0.5) and is_equal_approx(shell.camera_zoom_slider.value, 0.5), "Camera zoom defaults to a wider 50% view")
 	check(shell.title_screen.tutorial_button.text == "Tutorial" and shell.title_screen.editor_button.text == "Level Editor", "Title has tutorial and editor routes")
 	check(shell.title_screen.multiplayer_button.has_focus() and shell.title_screen.main_actions.visible and not shell.title_screen.multiplayer_actions.visible, "Title starts with Multiplayer selected on the main menu")
 	check(shell.title_screen.multiplayer_button.get_index() < shell.title_screen.editor_button.get_index() and shell.title_screen.editor_button.get_index() < shell.title_screen.tutorial_button.get_index(), "Main menu order is Multiplayer, Level Editor, Tutorial")
@@ -142,11 +143,23 @@ func _run() -> void:
 	check(shell._player().position == position, "Physics remains frozen while paused")
 	shell.show_settings()
 	check(paused and shell.settings_dialog.visible and not shell.pause_dialog.visible, "Settings stays paused")
+	check(shell._player().camera_zoom_preview, "Opening Settings starts a camera preview")
 	shell.camera_zoom_slider.value = 0.57
 	shell.wall_cursor_toggle.button_pressed = true
 	check(shell._player().initial_camera_zoom == Vector2.ONE * 0.57 and shell._player().show_grapple_cursor, "Settings update player")
+	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.57), "Zoom slider updates the visible camera immediately while paused")
+	check(root.get_canvas_transform().get_scale().is_equal_approx(Vector2.ONE * 0.57), "The rendered viewport zoom updates before gameplay resumes")
+	shell.camera_zoom_slider.value = 0.45
+	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.45), "Zoom preview reaches the slider minimum")
+	shell.camera_zoom_slider.value = 0.85
+	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.85), "Zoom preview reaches the slider maximum")
+	shell.camera_zoom_slider.value = 0.57
+	await process_frame
+	await process_frame
+	check(paused and shell._player().position == position and shell._player().controls_locked and shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.57), "Live camera preview keeps physics and controls paused")
 	shell._close_settings()
 	check(paused and shell.pause_dialog.visible, "Back from settings returns to paused menu")
+	check(not shell._player().camera_zoom_preview, "Closing Settings restores normal camera behavior")
 	key(shell, KEY_ESCAPE)
 	await process_frame
 	await process_frame

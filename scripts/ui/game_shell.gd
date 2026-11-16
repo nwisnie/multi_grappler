@@ -76,7 +76,7 @@ var account_sign_out: Button
 var camera_zoom_slider: HSlider
 var wall_cursor_toggle: CheckBox
 var fullscreen_toggle: CheckBox
-var camera_zoom := 0.65
+var camera_zoom: float = preload("res://scripts/player/ball.gd").CAMERA_BASE_ZOOM.x
 var show_wall_cursor := false
 var resume_waiting_for_release := false
 
@@ -637,6 +637,7 @@ func _build_settings_menu() -> void:
 	settings_dialog.get_ok_button().hide()
 	settings_dialog.get_cancel_button().hide()
 	settings_dialog.canceled.connect(_close_settings)
+	settings_dialog.visibility_changed.connect(func() -> void: _apply_player_settings(_player()))
 	var column := _column(settings_dialog)
 	var zoom_label := _label("Camera zoom: %d%%" % roundi(camera_zoom * 100.0))
 	column.add_child(zoom_label)
@@ -732,7 +733,7 @@ func _player() -> RigidBody2D:
 
 func _apply_player_settings(player: RigidBody2D) -> void:
 	if is_instance_valid(player):
-		player.initial_camera_zoom = Vector2.ONE * camera_zoom
+		player.set_camera_zoom(camera_zoom, settings_dialog.visible)
 		player.show_grapple_cursor = show_wall_cursor
 		if screen == Screen.MULTIPLAYER and (pause_dialog.visible or settings_dialog.visible):
 			player.spawn_controls_pending = false
@@ -912,8 +913,8 @@ func playtest(document: LevelDocument) -> void:
 	var custom: CustomLevel = CustomScene.instantiate()
 	var error := custom.prepare(document)
 	if not error.is_empty():
+		editor.show_geometry_error(custom.terrain_error, error)
 		custom.free()
-		editor._set_status(error, true)
 		return
 	_clear_menus()
 	title_screen.hide()

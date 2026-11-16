@@ -15,12 +15,12 @@ const CHECKPOINT_MIN_SCREEN_RADIUS := 22.0
 enum Tool { SELECT, LINE, CURVE, SPAWN, ORB, CHECKPOINT, ERASE }
 const TOOL_NAMES := ["Select", "Line", "Curve", "Spawn", "Grapple orb", "Race checkpoint", "Erase"]
 const INSTRUCTIONS := [
-	"Drag endpoints to move a shared joint; drag the curve's diamond to reshape it. Delete removes the selection.",
+	"Drag terrain joints, curve diamonds, or checkpoint line endpoints. Drag a checkpoint to move it. Delete removes it.",
 	"Click two grid intersections. Nearby endpoints snap together. Escape cancels.",
 	"Click start, end, then a third grid intersection that the curve passes through. Escape cancels.",
-	"Click a cell to place the player start and race checkpoint 1. The spawn must be clear of terrain to playtest.",
+	"Place checkpoint 1 as a hoop or a two-point line. Set the spawn position along its line; keep it clear of terrain.",
 	"Click a cell to place a grapple orb. Use Select to move it, or Erase to remove it.",
-	"Click a cell to place the next numbered hoop. Select a hoop to change its order or mark it as the finish.",
+	"Choose Hoop or Line. Lines use two cell centers. Click an existing checkpoint to edit it; use Select to drag endpoints.",
 	"Click terrain, spawn, an orb, or a checkpoint to remove it. Undo restores it."
 ]
 
@@ -56,6 +56,8 @@ var account_session: Node
 var document := LevelDocument.new()
 var tool: int = Tool.LINE
 var pending: Array[Vector2i] = []
+var checkpoint_shape := 0
+var endpoint_checkpoint := 0
 var hover_vertex := Vector2i.ZERO
 var hover_cell := Vector2i.ZERO
 var mouse_on_board := false
@@ -75,6 +77,9 @@ var gizmos: Gizmos
 var ui: CanvasLayer
 var background_layer: CanvasLayer
 var status: RichTextLabel
+var geometry_issue_button: Button
+var geometry_error_points := PackedVector2Array()
+var geometry_error_segments: Array[int] = []
 var counts: RichTextLabel
 var undo_button: Button
 var redo_button: Button
@@ -88,12 +93,16 @@ var importing := false
 var clear_dialog: ConfirmationDialog
 var top_panel: PanelContainer
 var bottom_panel: PanelContainer
-var checkpoint_properties: HBoxContainer
+var checkpoint_properties: HFlowContainer
 var checkpoint_label: Label
 var checkpoint_order: Label
 var checkpoint_order_up: Button
 var checkpoint_order_down: Button
 var checkpoint_finish: Button
+var checkpoint_type: OptionButton
+var checkpoint_endpoints: Button
+var spawn_position_controls: HBoxContainer
+var spawn_position: SpinBox
 var race_dialog: ConfirmationDialog
 var race_laps: Label
 var race_laps_up: Button
@@ -254,6 +263,10 @@ func _build_ui() -> void:
 		_button("Export", func() -> void: _open_code(false), "Export this level as a shareable code."),
 		_button("Import", func() -> void: _open_code(true), "Import a level from a code."),
 	]))
+	geometry_issue_button = _button("Show terrain issue", _focus_geometry_issue, "Zoom to the red markers. Use Select to adjust nearby endpoints or curve handles.")
+	geometry_issue_button.theme_type_variation = &"DangerButton"
+	geometry_issue_button.hide()
+	actions.add_child(geometry_issue_button)
 	var tools := HFlowContainer.new()
 	rows.add_child(tools)
 	tools.add_child(_menu_title("Build Options"))
@@ -280,17 +293,39 @@ func _build_ui() -> void:
 	counts.add_theme_font_size_override("normal_font_size", 14)
 	counts.add_theme_color_override("default_color", counts.get_theme_color("font_color", "Label"))
 	tools.add_child(counts)
-	checkpoint_properties = HBoxContainer.new()
+	checkpoint_properties = HFlowContainer.new()
 	checkpoint_properties.add_theme_constant_override("separation", 14)
 	rows.add_child(checkpoint_properties)
 	checkpoint_label = Label.new()
 	checkpoint_properties.add_child(checkpoint_label)
+	checkpoint_type = OptionButton.new()
+	checkpoint_type.add_item("Hoop")
+	checkpoint_type.add_item("Line")
+	checkpoint_type.tooltip_text = "Checkpoint shape. A line is defined by two cell centers."
+	checkpoint_type.item_selected.connect(_change_checkpoint_type)
+	checkpoint_properties.add_child(checkpoint_type)
+	checkpoint_endpoints = _button("Set endpoints", _set_checkpoint_endpoints, "Click two cell centers to define this checkpoint line.")
+	checkpoint_properties.add_child(checkpoint_endpoints)
 	checkpoint_order = Label.new()
 	checkpoint_order_up = _number_arrow(1, _step_checkpoint_number, "checkpoint number")
 	checkpoint_order_down = _number_arrow(-1, _step_checkpoint_number, "checkpoint number")
 	checkpoint_properties.add_child(_number_controls(checkpoint_order, checkpoint_order_up, checkpoint_order_down))
 	checkpoint_finish = _button("Set Finish Checkpoint", _toggle_checkpoint_finish)
 	checkpoint_properties.add_child(checkpoint_finish)
+	spawn_position_controls = HBoxContainer.new()
+	var spawn_label := Label.new()
+	spawn_label.text = "Spawn on line"
+	spawn_position_controls.add_child(spawn_label)
+	spawn_position = SpinBox.new()
+	spawn_position.min_value = 0
+	spawn_position.max_value = 100
+	spawn_position.step = 1
+	spawn_position.suffix = "%"
+	spawn_position.custom_minimum_size.x = 100
+	spawn_position.tooltip_text = "0% is endpoint A; 100% is endpoint B. The player spawns at this point."
+	spawn_position.value_changed.connect(_change_spawn_position)
+	spawn_position_controls.add_child(spawn_position)
+	checkpoint_properties.add_child(spawn_position_controls)
 	var bottom := MenuPanel.new()
 	bottom_panel = bottom
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
@@ -470,21 +505,26 @@ func _apply_race_settings() -> void:
 		next.finish_checkpoint = 1
 	next.race_laps = race_lap_count if next.finish_checkpoint == 1 else 1
 	_commit(next)
-	_set_status("Race settings updated. Place hoops with Race checkpoint; select a hoop to edit its order.")
+	_set_status("Race settings updated. Place hoops or lines with Race checkpoint; select a checkpoint to edit its order.")
 
 func _refresh_checkpoint_properties() -> void:
 	var selected: bool = selection.get("kind", "") == "checkpoint" and int(selection.get("index", -1)) >= 0 and int(selection.get("index", -1)) < document.checkpoints.size()
-	checkpoint_properties.visible = selected or tool == Tool.CHECKPOINT
-	checkpoint_label.text = "Selected Checkpoint" if selected else "Next Checkpoint"
+	var selected_spawn: bool = selection.get("kind", "") == "spawn" and LevelDocument.valid_cell(document.spawn)
+	var number := int(selection["index"]) + 2 if selected else (1 if selected_spawn else 0)
+	checkpoint_properties.visible = selected or selected_spawn or tool in [Tool.CHECKPOINT, Tool.SPAWN]
+	checkpoint_label.text = "Spawn / Checkpoint" if selected_spawn or tool == Tool.SPAWN else ("Selected Checkpoint" if selected else "Next Checkpoint")
+	checkpoint_type.select(int(document.checkpoint_lines.has(number)) if number > 0 else checkpoint_shape)
+	checkpoint_endpoints.visible = number > 0 and document.checkpoint_lines.has(number)
+	spawn_position_controls.visible = selected_spawn and document.checkpoint_lines.has(1)
+	spawn_position.set_value_no_signal(document.spawn_line_position)
 	checkpoint_finish.disabled = not selected
 	if not selected:
 		var next_number := document.checkpoints.size() + (2 if document.finish_checkpoint == 1 else 1)
-		checkpoint_order.text = str(next_number) if document.checkpoints.size() < LevelDocument.MAX_CHECKPOINTS else "-"
+		checkpoint_order.text = "1" if selected_spawn or tool == Tool.SPAWN else (str(next_number) if document.checkpoints.size() < LevelDocument.MAX_CHECKPOINTS else "-")
 		checkpoint_order_up.disabled = true
 		checkpoint_order_down.disabled = true
 		checkpoint_finish.text = "Set Finish Checkpoint"
 		return
-	var number := int(selection["index"]) + 2
 	var finish := document.finish_checkpoint == number
 	var maximum := document.checkpoints.size() + (0 if document.finish_checkpoint > 1 else 1)
 	checkpoint_order.text = str(number)
@@ -492,10 +532,63 @@ func _refresh_checkpoint_properties() -> void:
 	checkpoint_order_down.disabled = finish or number <= 2
 	checkpoint_finish.text = "Unset Finish Checkpoint" if finish else "Set Finish Checkpoint"
 
+func _selected_checkpoint_number() -> int:
+	if selection.get("kind", "") == "spawn":
+		return 1
+	if selection.get("kind", "") == "checkpoint":
+		return int(selection["index"]) + 2
+	return 0
+
+func _change_checkpoint_type(value: int) -> void:
+	_finish_drag()
+	pending.clear()
+	endpoint_checkpoint = 0
+	checkpoint_shape = value
+	var number := _selected_checkpoint_number()
+	if number == 0:
+		_refresh_checkpoint_properties()
+		_set_status("Click two cell centers to place a checkpoint line." if value == 1 else "Click a cell to place a checkpoint hoop.")
+		return
+	var next := document.copy()
+	if value == 1:
+		var center := next.checkpoint_cell(number)
+		var a := Vector2i(center.x, maxi(0, center.y - 2))
+		var b := Vector2i(center.x, mini(LevelDocument.GRID_SIZE - 1, center.y + 2))
+		next.set_checkpoint_line(number, a, b)
+		if number == 1:
+			next.spawn_line_position = roundi(100.0 * (center.y - a.y) / (b.y - a.y))
+	else:
+		if number == 1:
+			next.spawn = LevelDocument.snap_cell(next.spawn_position())
+		next.checkpoint_lines.erase(number)
+	var error := next.validate()
+	if not error.is_empty():
+		_set_status(error, true)
+		_refresh_checkpoint_properties()
+		return
+	_commit(next)
+	_set_status("Line created. Use Set endpoints or Select to move its two points." if value == 1 else "Checkpoint changed to a hoop.")
+
+func _set_checkpoint_endpoints() -> void:
+	_finish_drag()
+	pending.clear()
+	endpoint_checkpoint = _selected_checkpoint_number()
+	_set_status("Click endpoint A, then endpoint B. Escape cancels.")
+
+func _change_spawn_position(value: float) -> void:
+	if not document.checkpoint_lines.has(1) or int(value) == document.spawn_line_position:
+		return
+	var next := document.copy()
+	next.spawn_line_position = int(value)
+	_commit(next)
+	_set_status("Spawn position updated along the line.")
+
 func _change_checkpoint_number(value: float) -> void:
 	if selection.get("kind", "") != "checkpoint":
 		return
 	_finish_drag()
+	pending.clear()
+	endpoint_checkpoint = 0
 	var next := document.copy()
 	selection["index"] = next.reorder_checkpoint(selection["index"], int(value))
 	_commit(next)
@@ -505,13 +598,15 @@ func _change_checkpoint_finish(enabled: bool) -> void:
 	if selection.get("kind", "") != "checkpoint":
 		return
 	_finish_drag()
+	pending.clear()
+	endpoint_checkpoint = 0
 	var next := document.copy()
 	if enabled:
 		selection["index"] = next.mark_finish(selection["index"])
 	else:
 		next.finish_checkpoint = 1
 	_commit(next)
-	_set_status("Finish hoop moved to the end of the race." if enabled else "Finish returns to spawn. Set the lap count in Race settings.")
+	_set_status("Finish checkpoint moved to the end of the race." if enabled else "Finish returns to spawn. Set the lap count in Race settings.")
 
 func _build_code_dialog() -> void:
 	code_dialog = ConfirmationDialog.new()
@@ -605,6 +700,9 @@ func _set_tool(value: int) -> void:
 	_cancel_action()
 	tool = value
 	selection.clear()
+	if tool == Tool.SPAWN and LevelDocument.valid_cell(document.spawn):
+		selection = {"kind": "spawn"}
+		checkpoint_shape = int(document.checkpoint_lines.has(1))
 	for index in range(tool_buttons.size()):
 		tool_buttons[index].button_pressed = index == tool
 	_refresh()
@@ -729,6 +827,53 @@ func _set_status(message: String, error: bool = false) -> void:
 	status.text = message
 	status.modulate = Color("fda397") if error else Color.WHITE
 
+func _clear_geometry_error() -> void:
+	if not geometry_error_points.is_empty():
+		_set_status("Terrain changed. Playtest again to check the joins.")
+	geometry_error_points.clear()
+	geometry_error_segments.clear()
+	if geometry_issue_button != null:
+		geometry_issue_button.hide()
+	if gizmos != null:
+		gizmos.queue_redraw()
+
+func show_geometry_error(details: Dictionary, message: String = "") -> void:
+	_clear_geometry_error()
+	var points: PackedVector2Array = details.get("error_points", PackedVector2Array())
+	# Several numerically split endpoints can describe the same visible joint.
+	for point in points:
+		var nearby := false
+		for existing in geometry_error_points:
+			if point.distance_to(existing) < LevelDocument.CELL_SIZE * 0.25:
+				nearby = true
+				break
+		if not nearby:
+			geometry_error_points.append(point)
+	geometry_error_segments.assign(details.get("segment_indices", LevelGeometry.segments_near_points(document, points)))
+	geometry_issue_button.visible = not geometry_error_points.is_empty()
+	var explanation: String = details.get("error", message)
+	if not geometry_error_points.is_empty():
+		var grid := geometry_error_points[0] / LevelDocument.CELL_SIZE
+		explanation += " Red markers near grid (%.2f, %.2f). Click Show terrain issue to zoom in." % [grid.x, grid.y]
+	_set_status(explanation, true)
+	gizmos.queue_redraw()
+
+func _focus_geometry_issue() -> void:
+	if geometry_error_points.is_empty():
+		return
+	var bounds := Rect2(geometry_error_points[0], Vector2.ZERO)
+	for point in geometry_error_points:
+		bounds = bounds.expand(point)
+	bounds = bounds.grow(LevelDocument.CELL_SIZE * 2.5)
+	var top_space := top_panel.size.y + 26.0
+	var bottom_space := bottom_panel.size.y + 18.0
+	var available := get_viewport_rect().size - Vector2(96, top_space + bottom_space)
+	var zoom := clampf(minf(available.x / bounds.size.x, available.y / bounds.size.y), 0.015, 1.25)
+	camera.zoom = Vector2.ONE * zoom
+	camera.position = bounds.get_center() - Vector2(0, (top_space - bottom_space) * 0.5 / zoom)
+	queue_redraw()
+	gizmos.queue_redraw()
+
 func _remember(before: LevelDocument) -> void:
 	undo_stack.append(before)
 	if undo_stack.size() > 100:
@@ -736,6 +881,8 @@ func _remember(before: LevelDocument) -> void:
 	redo_stack.clear()
 
 func _commit(next: LevelDocument) -> void:
+	if next.segments != document.segments:
+		_clear_geometry_error()
 	_remember(document.copy())
 	document = next
 	_refresh()
@@ -750,6 +897,8 @@ func undo() -> void:
 	_cancel_action()
 	if undo_stack.is_empty():
 		return
+	if document.segments != undo_stack[-1].segments:
+		_clear_geometry_error()
 	redo_stack.append(document.copy())
 	document = undo_stack.pop_back()
 	selection.clear()
@@ -759,6 +908,8 @@ func redo() -> void:
 	_cancel_action()
 	if redo_stack.is_empty():
 		return
+	if document.segments != redo_stack[-1].segments:
+		_clear_geometry_error()
 	undo_stack.append(document.copy())
 	document = redo_stack.pop_back()
 	selection.clear()
@@ -772,7 +923,7 @@ func _refresh() -> void:
 	terrain.set_document(document)
 	undo_button.disabled = undo_stack.is_empty()
 	redo_button.disabled = redo_stack.is_empty()
-	counts.text = "  %s/1024 segments [color=#69bfff]|[/color] %s/128 orbs [color=#69bfff]|[/color] %s/128 hoops" % [document.segments.size(), document.orbs.size(), document.checkpoints.size()]
+	counts.text = "  %s/1024 segments [color=#69bfff]|[/color] %s/128 orbs [color=#69bfff]|[/color] %s/128 checkpoints" % [document.segments.size(), document.orbs.size(), document.checkpoints.size()]
 	_refresh_checkpoint_properties()
 	_update_canvas_cursor()
 	queue_redraw()
@@ -931,6 +1082,9 @@ func _update_hover(screen: Vector2) -> void:
 func _click(world: Vector2) -> void:
 	if not mouse_on_board:
 		return
+	if endpoint_checkpoint > 0 or (tool in [Tool.SPAWN, Tool.CHECKPOINT] and checkpoint_shape == 1):
+		_click_checkpoint_line(world)
+		return
 	if tool == Tool.SELECT:
 		_select_at(world)
 		return
@@ -939,9 +1093,19 @@ func _click(world: Vector2) -> void:
 		_delete_selection()
 		return
 	if tool in [Tool.SPAWN, Tool.ORB, Tool.CHECKPOINT]:
+		if tool == Tool.CHECKPOINT:
+			var picked := _pick_object(world)
+			if picked.get("kind", "") in ["checkpoint", "spawn"]:
+				selection = picked
+				checkpoint_shape = int(document.checkpoint_lines.has(_selected_checkpoint_number()))
+				_refresh_checkpoint_properties()
+				gizmos.queue_redraw()
+				return
 		var next := document.copy()
 		if tool == Tool.SPAWN:
 			next.spawn = hover_cell
+			next.checkpoint_lines.erase(1)
+			selection = {"kind": "spawn"}
 		elif tool == Tool.ORB:
 			if next.orbs.has(hover_cell):
 				_set_status("There is already an orb in that cell.")
@@ -955,9 +1119,7 @@ func _click(world: Vector2) -> void:
 				_set_status("Maximum 128 race checkpoints reached.", true)
 				return
 			var index := next.checkpoints.size() if next.finish_checkpoint == 1 else next.checkpoints.size() - 1
-			next.checkpoints.insert(index, hover_cell)
-			if next.finish_checkpoint > 1:
-				next.finish_checkpoint += 1
+			next.insert_checkpoint(index, hover_cell)
 			selection = {"kind": "checkpoint", "index": index}
 		var error := next.validate()
 		if not error.is_empty():
@@ -965,7 +1127,7 @@ func _click(world: Vector2) -> void:
 			_set_status(error, true)
 			return
 		_commit(next)
-		_set_status("Checkpoint placed. Select a hoop to edit its number or finish status." if tool == Tool.CHECKPOINT else ("Spawn placed as checkpoint 1." if tool == Tool.SPAWN else "Grapple orb placed."))
+		_set_status("Checkpoint placed. Choose Hoop or Line to change its shape." if tool == Tool.CHECKPOINT else ("Spawn placed as checkpoint 1." if tool == Tool.SPAWN else "Grapple orb placed."))
 		return
 	if document.segments.size() >= LevelDocument.MAX_SEGMENTS:
 		_set_status("Maximum 1,024 terrain segments reached.", true)
@@ -993,6 +1155,47 @@ func _click(world: Vector2) -> void:
 	else:
 		_set_status("Choose the end point." if pending.size() == 1 else "Choose the point the curve passes through.")
 
+func _click_checkpoint_line(world: Vector2) -> void:
+	if pending.is_empty():
+		# Existing checkpoints can still be selected while placing new lines.
+		if endpoint_checkpoint == 0 and tool == Tool.CHECKPOINT:
+			var picked := _pick_object(world)
+			if picked.get("kind", "") in ["spawn", "checkpoint"]:
+				selection = picked
+				checkpoint_shape = int(document.checkpoint_lines.has(_selected_checkpoint_number()))
+				_refresh_checkpoint_properties()
+				gizmos.queue_redraw()
+				return
+		pending.append(hover_cell)
+		_set_status("Choose endpoint B. Escape cancels.")
+		gizmos.queue_redraw()
+		return
+	if hover_cell == pending[0]:
+		_set_status("Choose two different checkpoint line endpoints.", true)
+		return
+	var next := document.copy()
+	var number := endpoint_checkpoint
+	if number == 0:
+		if tool == Tool.SPAWN:
+			number = 1
+		else:
+			if next.checkpoints.size() >= LevelDocument.MAX_CHECKPOINTS:
+				_set_status("Maximum 128 race checkpoints reached.", true)
+				return
+			var index := next.checkpoints.size() if next.finish_checkpoint == 1 else next.checkpoints.size() - 1
+			next.insert_checkpoint(index, pending[0])
+			number = index + 2
+	next.set_checkpoint_line(number, pending[0], hover_cell)
+	var error := next.validate()
+	if not error.is_empty():
+		_set_status(error, true)
+		return
+	selection = {"kind": "spawn"} if number == 1 else {"kind": "checkpoint", "index": number - 2}
+	pending.clear()
+	endpoint_checkpoint = 0
+	_commit(next)
+	_set_status("Checkpoint line placed. Use Select to drag endpoints; Spawn on line sets the player start.")
+
 func _pending_segment(point: Vector2i) -> Dictionary:
 	var segment := {"kind": LevelDocument.SegmentKind.LINE, "a": pending[0], "b": point if pending.size() == 1 else pending[1]}
 	if tool == Tool.CURVE and pending.size() >= 2:
@@ -1002,10 +1205,10 @@ func _pending_segment(point: Vector2i) -> Dictionary:
 
 func _pick_object(world: Vector2) -> Dictionary:
 	var spawn_tolerance := maxf(LevelDocument.PLAYER_RADIUS, 12.0 / camera.zoom.x)
-	if LevelDocument.valid_cell(document.spawn) and world.distance_to(LevelDocument.cell_position(document.spawn)) <= spawn_tolerance:
+	if LevelDocument.valid_cell(document.spawn) and (world.distance_to(document.spawn_position()) <= spawn_tolerance or _checkpoint_hit(world, 1)):
 		return {"kind": "spawn"}
 	for index in range(document.checkpoints.size() - 1, -1, -1):
-		if world.distance_to(LevelDocument.cell_position(document.checkpoints[index])) <= maxf(LevelDocument.CHECKPOINT_RADIUS + 12.0, CHECKPOINT_MIN_SCREEN_RADIUS / camera.zoom.x):
+		if _checkpoint_hit(world, index + 2):
 			return {"kind": "checkpoint", "index": index}
 	for index in range(document.orbs.size() - 1, -1, -1):
 		if world.distance_to(LevelDocument.cell_position(document.orbs[index])) <= maxf(36.0, 12.0 / camera.zoom.x):
@@ -1021,9 +1224,24 @@ func _pick_object(world: Vector2) -> Dictionary:
 				selected = {"kind": "segment", "index": index}
 	return selected
 
+func _checkpoint_hit(world: Vector2, number: int) -> bool:
+	if document.checkpoint_lines.has(number):
+		var line: Dictionary = document.checkpoint_lines[number]
+		return world.distance_to(Geometry2D.get_closest_point_to_segment(world, LevelDocument.cell_position(line["a"]), LevelDocument.cell_position(line["b"]))) <= 12.0 / camera.zoom.x
+	return world.distance_to(document.checkpoint_position(number)) <= maxf(LevelDocument.CHECKPOINT_RADIUS + 12.0, CHECKPOINT_MIN_SCREEN_RADIUS / camera.zoom.x)
+
 func _pick_handle(world: Vector2) -> Dictionary:
 	var nearest := 12.0 / camera.zoom.x
 	var handle := {}
+	for number in document.checkpoint_lines:
+		var line: Dictionary = document.checkpoint_lines[number]
+		for key in ["a", "b"]:
+			var distance := world.distance_to(LevelDocument.cell_position(line[key]))
+			if distance < nearest:
+				nearest = distance
+				handle = {"kind": "checkpoint_endpoint", "number": number, "key": key}
+	if not handle.is_empty():
+		return handle
 	for index in range(document.segments.size()):
 		var segment := document.segments[index]
 		var keys := ["a", "b", "m"] if segment["kind"] == LevelDocument.SegmentKind.CURVE else ["a", "b"]
@@ -1037,12 +1255,16 @@ func _pick_handle(world: Vector2) -> Dictionary:
 func _select_at(world: Vector2) -> void:
 	var handle := _pick_handle(world)
 	if not handle.is_empty():
-		selection = {"kind": "segment", "index": handle["index"]}
+		if handle["kind"] == "checkpoint_endpoint":
+			selection = {"kind": "spawn"} if handle["number"] == 1 else {"kind": "checkpoint", "index": handle["number"] - 2}
+		else:
+			selection = {"kind": "segment", "index": handle["index"]}
 		drag = handle
 	else:
 		selection = _pick_object(world)
 		if selection.get("kind", "") in ["spawn", "orb", "checkpoint"]:
 			drag = selection.duplicate()
+			drag["grab_cell"] = LevelDocument.snap_cell(world)
 	if not drag.is_empty():
 		drag_original = document.copy()
 		drag_valid = true
@@ -1060,9 +1282,14 @@ func _update_drag(world: Vector2) -> void:
 	match drag["kind"]:
 		"vertex": next.move_vertex(drag["old"], grid)
 		"middle": next.segments[drag["index"]]["m"] = grid
-		"spawn": next.spawn = grid
+		"spawn": next.move_checkpoint(1, drag_original.spawn + grid - drag["grab_cell"] if next.checkpoint_lines.has(1) else grid)
 		"orb": next.orbs[drag["index"]] = grid
-		"checkpoint": next.checkpoints[drag["index"]] = grid
+		"checkpoint": next.move_checkpoint(drag["index"] + 2, drag_original.checkpoints[drag["index"]] + grid - drag["grab_cell"] if next.checkpoint_lines.has(drag["index"] + 2) else grid)
+		"checkpoint_endpoint":
+			var number: int = drag["number"]
+			var line: Dictionary = next.checkpoint_lines[number]
+			line[drag["key"]] = grid
+			next.set_checkpoint_line(number, line["a"], line["b"])
 	var error := next.validate()
 	if drag["kind"] == "orb" and next.orbs.count(grid) > 1:
 		error = "There is already an orb in that cell."
@@ -1080,6 +1307,8 @@ func _finish_drag() -> void:
 		document = drag_original
 		_set_status("Move cancelled because the resulting geometry was invalid.", true)
 	elif LevelCodec.encode_level(document) != LevelCodec.encode_level(drag_original):
+		if document.segments != drag_original.segments:
+			_clear_geometry_error()
 		_remember(drag_original)
 		_set_status("Moved on the grid. All endpoints sharing the joint move together.")
 	drag.clear()
@@ -1092,17 +1321,22 @@ func _cancel_action() -> void:
 		drag.clear()
 		drag_original = null
 	pending.clear()
+	endpoint_checkpoint = 0
 	panning = false
 	_refresh()
 
 func _delete_selection() -> void:
 	_finish_drag()
+	pending.clear()
+	endpoint_checkpoint = 0
 	if selection.is_empty():
 		return
 	var next := document.copy()
 	match selection["kind"]:
 		"segment": next.segments.remove_at(selection["index"])
-		"spawn": next.spawn = Vector2i(-1, -1)
+		"spawn":
+			next.spawn = Vector2i(-1, -1)
+			next.checkpoint_lines.erase(1)
 		"orb": next.orbs.remove_at(selection["index"])
 		"checkpoint": next.remove_checkpoint(selection["index"])
 	selection.clear()
@@ -1164,7 +1398,7 @@ func draw_gizmos(canvas: Node2D) -> void:
 		if hovered or (selection.get("kind", "") == "orb" and selection["index"] == index):
 			canvas.draw_arc(position, radius + 4.0 * scale_factor, 0, TAU, 32, hover_color if hovered else accent, 2.0 * scale_factor, true)
 	if LevelDocument.valid_cell(document.spawn):
-		var spawn_position := LevelDocument.cell_position(document.spawn)
+		var spawn_position := document.spawn_position()
 		var radius := maxf(LevelDocument.PLAYER_RADIUS, 8.0 * scale_factor)
 		var hovered: bool = hovered_object.get("kind", "") == "spawn"
 		canvas.draw_circle(spawn_position, radius, Color("183b3c"))
@@ -1179,7 +1413,11 @@ func draw_gizmos(canvas: Node2D) -> void:
 		var selected: bool = selection.get("kind", "") == "checkpoint" and selection["index"] == index
 		var hovered: bool = hovered_object.get("kind", "") == "checkpoint" and hovered_object["index"] == index
 		_draw_checkpoint(canvas, LevelDocument.cell_position(document.checkpoints[index]), index + 2, selected, hovered, scale_factor)
-	if not pending.is_empty():
+	if not pending.is_empty() and (endpoint_checkpoint > 0 or tool in [Tool.SPAWN, Tool.CHECKPOINT]):
+		var a := LevelDocument.cell_position(pending[0])
+		var b := LevelDocument.cell_position(hover_cell)
+		RaceCheckpoint.draw_checkpoint_line(canvas, a, b, "A → B", accent, 4.0 * scale_factor, roundi(16 * scale_factor))
+	elif not pending.is_empty():
 		var preview := _pending_segment(hover_vertex)
 		var valid := LevelDocument.segment_error(preview).is_empty()
 		var points := LevelDocument.sample_segment(preview)
@@ -1191,6 +1429,24 @@ func draw_gizmos(canvas: Node2D) -> void:
 			canvas.draw_rect(Rect2(Vector2(hover_cell) * LevelDocument.CELL_SIZE, Vector2.ONE * LevelDocument.CELL_SIZE), Color(0.45, 0.9, 0.8, 0.25))
 		elif tool in [Tool.LINE, Tool.CURVE]:
 			canvas.draw_circle(LevelDocument.vertex_position(hover_vertex), 5.0 * scale_factor, accent)
+	_draw_geometry_issues(canvas, scale_factor)
+
+func _draw_geometry_issues(canvas: Node2D, scale_factor: float) -> void:
+	var red := Color("ff776f")
+	for index in geometry_error_segments:
+		if index < 0 or index >= document.segments.size():
+			continue
+		var points := LevelDocument.sample_segment(document.segments[index])
+		canvas.draw_polyline(points, Color(1.0, 0.25, 0.2, 0.18), LevelDocument.CELL_SIZE + 8.0 * scale_factor, true)
+		canvas.draw_polyline(points, red, 3.0 * scale_factor, true)
+	for point in geometry_error_points:
+		canvas.draw_circle(point, 18.0 * scale_factor, Color("101a25"))
+		canvas.draw_arc(point, 18.0 * scale_factor, 0, TAU, 32, red, 3.0 * scale_factor, true)
+		canvas.draw_string(RaceCheckpoint.FONT, point + Vector2(-4, 7) * scale_factor, "!", HORIZONTAL_ALIGNMENT_LEFT, -1, roundi(22 * scale_factor), Color.WHITE)
+		var label_position := point + Vector2(26, -10) * scale_factor
+		var font_size := roundi(16 * scale_factor)
+		canvas.draw_string_outline(RaceCheckpoint.FONT, label_position, "Terrain join", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, maxi(3, roundi(4 * scale_factor)), Color("101a25"))
+		canvas.draw_string(RaceCheckpoint.FONT, label_position, "Terrain join", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, red)
 
 func _draw_checkpoint(canvas: Node2D, point: Vector2, number: int, selected: bool, hovered: bool, scale_factor: float) -> void:
 	var caption := str(number)
@@ -1201,4 +1457,16 @@ func _draw_checkpoint(canvas: Node2D, point: Vector2, number: int, selected: boo
 	var color := Color("ec839a") if number == document.finish_checkpoint else Color("46c7bb")
 	if selected or hovered:
 		color = Color("ffc947")
-	RaceCheckpoint.draw_hoop(canvas, point, maxf(LevelDocument.CHECKPOINT_RADIUS, CHECKPOINT_MIN_SCREEN_RADIUS * scale_factor), caption, color, 4.0 * scale_factor, roundi(16 * scale_factor))
+	if document.checkpoint_lines.has(number):
+		var line: Dictionary = document.checkpoint_lines[number]
+		var a := LevelDocument.cell_position(line["a"])
+		var b := LevelDocument.cell_position(line["b"])
+		RaceCheckpoint.draw_checkpoint_line(canvas, a, b, caption, color, 4.0 * scale_factor, roundi(16 * scale_factor))
+		if tool == Tool.SELECT or selected:
+			for key in ["a", "b"]:
+				var endpoint := LevelDocument.cell_position(line[key])
+				canvas.draw_circle(endpoint, 7.0 * scale_factor, color)
+				canvas.draw_arc(endpoint, 7.0 * scale_factor, 0, TAU, 24, Color.WHITE, 2.0 * scale_factor, true)
+				canvas.draw_string(RaceCheckpoint.FONT, endpoint + Vector2(10, -10) * scale_factor, key.to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, roundi(14 * scale_factor), Color.WHITE)
+	else:
+		RaceCheckpoint.draw_hoop(canvas, point, maxf(LevelDocument.CHECKPOINT_RADIUS, CHECKPOINT_MIN_SCREEN_RADIUS * scale_factor), caption, color, 4.0 * scale_factor, roundi(16 * scale_factor))

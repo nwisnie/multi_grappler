@@ -55,6 +55,25 @@ func _run() -> void:
 	await physics_frame
 	await physics_frame
 	check(player.controls_locked, "Network player remains locked while the menu is open")
+	shell.show_settings()
+	await create_timer(preload("res://scripts/ui/menu_slide.gd").EXIT_DURATION + preload("res://scripts/ui/menu_slide.gd").ENTER_DURATION + 0.1).timeout
+	check(shell.settings_dialog.visible and player.camera_zoom_preview and not paused, "Network Settings previews the camera without pausing multiplayer")
+	var replica_zoom: Vector2 = replica.camera.zoom
+	player.freeze = true
+	player.linear_velocity = Vector2(2500, 0)
+	player.interaction_zoom_offset = Vector2.ONE * 0.08
+	shell.camera_zoom_slider.value = 0.55
+	check(player.camera.zoom.is_equal_approx(Vector2.ONE * 0.55), "Network zoom preview applies the selected value immediately, even at high speed")
+	await physics_frame
+	await physics_frame
+	check(player.camera.zoom.is_equal_approx(Vector2.ONE * 0.55) and player.controls_locked, "Network camera updates preserve the preview while controls stay locked")
+	check(replica.camera.zoom == replica_zoom and not replica.camera_zoom_preview, "Zoom preview only changes the local player's camera")
+	shell._close_settings()
+	await create_timer(preload("res://scripts/ui/menu_slide.gd").EXIT_DURATION + preload("res://scripts/ui/menu_slide.gd").ENTER_DURATION + 0.1).timeout
+	check(not player.camera_zoom_preview and player.camera.zoom.is_equal_approx(player._camera_zoom_target()), "Leaving network Settings restores speed and interaction zoom effects")
+	player.interaction_zoom_offset = Vector2.ZERO
+	player.linear_velocity = Vector2.ZERO
+	player.freeze = false
 	shell.resume_game()
 	await create_timer(preload("res://scripts/ui/menu_slide.gd").EXIT_DURATION + 0.1).timeout
 	await process_frame

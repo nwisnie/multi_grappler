@@ -13,13 +13,16 @@ var document: LevelDocument
 var player: RigidBody2D
 var restart_pending := false
 var race: Node2D
+var terrain_error := {}
 
 func prepare(value: LevelDocument) -> String:
+	terrain_error.clear()
 	var error := value.playtest_error()
 	if not error.is_empty():
 		return error
 	var generated := LevelGeometry.build_runtime(value)
 	if not generated["error"].is_empty():
+		terrain_error = generated
 		return generated["error"]
 	document = value.copy()
 	add_child(generated["body"])
@@ -51,7 +54,7 @@ func restart() -> void:
 		remove_child(player)
 		player.queue_free()
 	player = PlayerScene.instantiate()
-	player.position = LevelDocument.cell_position(document.spawn)
+	player.position = document.spawn_position()
 	player.scale = Vector2.ONE * 1.18
 	add_child(player)
 	player.set_controls_locked(true)

@@ -4,7 +4,7 @@ import { requireUser } from "./accounts.js";
 const MAX_LEVELS = 100;
 const MAX_BODY = 20_480;
 // Keep in sync with LevelCodec and LevelDocument in the Godot client.
-const MAX_PAYLOAD = 6 + 1024 * 7 + 128 * 2 + 4 + 128 * 2;
+const MAX_PAYLOAD = 6 + 1024 * 7 + 128 * 2 + 4 + 128 * 2 + 3 + 129 * 5;
 const FULL = "The level library is full (100/100). No more levels can be uploaded right now.";
 
 function cell(x, y) { return x < 100 && y < 100; }
@@ -21,7 +21,8 @@ function validatePayload(bytes) {
   const segments = bytes[1] | bytes[2] << 8;
   const orbs = bytes[3];
   if (segments > 1024 || orbs > 128 || !cell(bytes[4], bytes[5])) invalid();
-  const spawn = [bytes[4] + 0.5, bytes[5] + 0.5];
+  let spawn = [bytes[4] + 0.5, bytes[5] + 0.5];
+  const terrain = [];
   let offset = 6;
   for (let index = 0; index < segments; index++) {
     if (offset + 5 > bytes.length) invalid();
@@ -48,27 +49,45 @@ function validatePayload(bytes) {
       steps += steps % 2;
       points = Array.from({ length: steps + 1 }, (_, step) => pointOnCurve(a, b, c, step / steps));
     }
-    for (let step = 1; step < points.length; step++) {
-      const p = points[step - 1], q = points[step];
-      const dx = q[0] - p[0], dy = q[1] - p[1];
-      const t = Math.max(0, Math.min(1, ((spawn[0] - p[0]) * dx + (spawn[1] - p[1]) * dy) / (dx * dx + dy * dy) || 0));
-      if (distance(spawn, [p[0] + t * dx, p[1] + t * dy]) <= (60 + 48 * 1.18 + 7) / 120) {
-        throw new RequestError("The spawn overlaps terrain. Move it to a clear cell before uploading.");
-      }
-    }
+    terrain.push(points);
   }
   if (offset + orbs * 2 > bytes.length) invalid();
   for (let index = 0; index < orbs; index++) if (!cell(bytes[offset++], bytes[offset++])) invalid();
   if (offset < bytes.length) {
     if (offset + 4 > bytes.length || bytes[offset++] !== 82) invalid();
     const count = bytes[offset++], laps = bytes[offset++], finish = bytes[offset++];
-    if (count > 128 || laps < 1 || laps > 50 || offset + count * 2 !== bytes.length ||
+    if (count > 128 || laps < 1 || laps > 50 || offset + count * 2 > bytes.length ||
         (finish !== 1 && (count === 0 || finish !== count + 1 || laps !== 1))) invalid();
     const occupied = new Set([`${bytes[4]},${bytes[5]}`]);
     for (let index = 0; index < count; index++) {
       const x = bytes[offset++], y = bytes[offset++], key = `${x},${y}`;
       if (!cell(x, y) || occupied.has(key)) invalid();
       occupied.add(key);
+    }
+    if (offset < bytes.length) {
+      if (offset + 3 > bytes.length || bytes[offset++] !== 76) invalid();
+      const lines = bytes[offset++], spawnPercent = bytes[offset++];
+      if (lines < 1 || lines > count + 1 || spawnPercent > 100 || offset + lines * 5 !== bytes.length) invalid();
+      const seen = new Set();
+      for (let index = 0; index < lines; index++) {
+        const number = bytes[offset++];
+        const a = [bytes[offset++], bytes[offset++]], b = [bytes[offset++], bytes[offset++]];
+        if (number < 1 || number > count + 1 || seen.has(number) || !cell(...a) || !cell(...b) || same(a, b)) invalid();
+        seen.add(number);
+        if (number === 1) spawn = a.map((value, axis) => value + 0.5 + (b[axis] - value) * spawnPercent / 100);
+      }
+    }
+  }
+  // Line spawns may lie between cells. Check the actual player position only
+  // after decoding the optional checkpoint geometry.
+  for (const points of terrain) {
+    for (let step = 1; step < points.length; step++) {
+      const p = points[step - 1], q = points[step];
+      const dx = q[0] - p[0], dy = q[1] - p[1];
+      const t = Math.max(0, Math.min(1, ((spawn[0] - p[0]) * dx + (spawn[1] - p[1]) * dy) / (dx * dx + dy * dy) || 0));
+      if (distance(spawn, [p[0] + t * dx, p[1] + t * dy]) <= (60 + 48 * 1.18 + 7) / 120) {
+        throw new RequestError("The spawn overlaps terrain. Move it to a clear point before uploading.");
+      }
     }
   }
 }

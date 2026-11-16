@@ -20,7 +20,11 @@ var spawn := Vector2i(-1, -1)
 var orbs: Array[Vector2i] = []
 ## Array order is race order; the spawn is always checkpoint 1.
 var checkpoints: Array[Vector2i] = []
-## 1 closes the course at spawn. A separate finish is always the last hoop.
+## Optional line endpoints (cell centers), keyed by race number including spawn 1.
+var checkpoint_lines: Dictionary = {}
+## Percentage along the spawn line, from endpoint A to B.
+var spawn_line_position := 50
+## 1 closes the course at spawn. A separate finish is always the last checkpoint.
 var finish_checkpoint := 1
 var race_laps := 1
 
@@ -30,6 +34,8 @@ func copy() -> LevelDocument:
 	result.spawn = spawn
 	result.orbs.assign(orbs)
 	result.checkpoints.assign(checkpoints)
+	result.checkpoint_lines = checkpoint_lines.duplicate(true)
+	result.spawn_line_position = spawn_line_position
 	result.finish_checkpoint = finish_checkpoint
 	result.race_laps = race_laps
 	return result
@@ -40,14 +46,23 @@ func reorder_checkpoint(index: int, number: int) -> int:
 	var last_number := checkpoints.size() if finish_checkpoint > 1 else checkpoints.size() + 1
 	var destination := clampi(number, 2, last_number) - 2
 	var point := checkpoints[index]
+	var line: Dictionary = checkpoint_lines.get(index + 2, {})
+	_shift_checkpoint_lines(index + 2, -1)
 	checkpoints.remove_at(index)
+	_shift_checkpoint_lines(destination + 2, 1)
 	checkpoints.insert(destination, point)
+	if not line.is_empty():
+		checkpoint_lines[destination + 2] = line
 	return destination
 
 func mark_finish(index: int) -> int:
 	var point := checkpoints[index]
+	var line: Dictionary = checkpoint_lines.get(index + 2, {})
+	_shift_checkpoint_lines(index + 2, -1)
 	checkpoints.remove_at(index)
 	checkpoints.append(point)
+	if not line.is_empty():
+		checkpoint_lines[checkpoints.size() + 1] = line
 	finish_checkpoint = checkpoints.size() + 1
 	race_laps = 1
 	return checkpoints.size() - 1
@@ -55,10 +70,58 @@ func mark_finish(index: int) -> int:
 func remove_checkpoint(index: int) -> void:
 	var removed_finish := finish_checkpoint > 1 and index == checkpoints.size() - 1
 	checkpoints.remove_at(index)
+	_shift_checkpoint_lines(index + 2, -1)
 	if removed_finish:
 		finish_checkpoint = 1
 	elif finish_checkpoint > 1:
 		finish_checkpoint = checkpoints.size() + 1
+
+func _shift_checkpoint_lines(number: int, step: int) -> void:
+	var shifted := {}
+	for key in checkpoint_lines:
+		if step < 0 and key == number:
+			continue
+		shifted[key + step if key >= number else key] = checkpoint_lines[key]
+	checkpoint_lines = shifted
+
+func insert_checkpoint(index: int, point: Vector2i) -> void:
+	_shift_checkpoint_lines(index + 2, 1)
+	checkpoints.insert(index, point)
+	if finish_checkpoint > 1:
+		finish_checkpoint += 1
+
+func checkpoint_cell(number: int) -> Vector2i:
+	return spawn if number == 1 else checkpoints[number - 2]
+
+func checkpoint_position(number: int) -> Vector2:
+	if checkpoint_lines.has(number):
+		var line: Dictionary = checkpoint_lines[number]
+		return (cell_position(line["a"]) + cell_position(line["b"])) * 0.5
+	return cell_position(checkpoint_cell(number))
+
+func spawn_position() -> Vector2:
+	if checkpoint_lines.has(1):
+		var line: Dictionary = checkpoint_lines[1]
+		return cell_position(line["a"]).lerp(cell_position(line["b"]), spawn_line_position / 100.0)
+	return cell_position(spawn)
+
+func set_checkpoint_line(number: int, a: Vector2i, b: Vector2i) -> void:
+	checkpoint_lines[number] = {"a": a, "b": b}
+	var center := snap_cell((cell_position(a) + cell_position(b)) * 0.5)
+	if number == 1:
+		spawn = center
+	else:
+		checkpoints[number - 2] = center
+
+func move_checkpoint(number: int, point: Vector2i) -> void:
+	if checkpoint_lines.has(number):
+		var offset := point - checkpoint_cell(number)
+		var line: Dictionary = checkpoint_lines[number]
+		set_checkpoint_line(number, line["a"] + offset, line["b"] + offset)
+	elif number == 1:
+		spawn = point
+	else:
+		checkpoints[number - 2] = point
 
 static func vertex_position(point: Vector2i) -> Vector2:
 	return Vector2(point) * CELL_SIZE
@@ -142,9 +205,22 @@ func validate() -> String:
 	if race_laps < 1 or race_laps > MAX_RACE_LAPS:
 		return "Choose between 1 and %d laps." % MAX_RACE_LAPS
 	if finish_checkpoint != 1 and (checkpoints.is_empty() or finish_checkpoint != checkpoints.size() + 1):
-		return "A separate finish checkpoint must be the last hoop."
+		return "A separate finish checkpoint must be the last checkpoint."
 	if finish_checkpoint > 1 and race_laps != 1:
 		return "Laps require finishing at the spawn checkpoint."
+	if spawn_line_position < 0 or spawn_line_position > 100:
+		return "The spawn position must be between 0% and 100% of its line."
+	for number in checkpoint_lines:
+		if typeof(number) != TYPE_INT or number < 1 or number > checkpoints.size() + 1 or (number == 1 and not valid_cell(spawn)):
+			return "A checkpoint line must belong to an existing checkpoint or spawn."
+		if typeof(checkpoint_lines[number]) != TYPE_DICTIONARY:
+			return "A checkpoint line needs two endpoints."
+		var line: Dictionary = checkpoint_lines[number]
+		for key in ["a", "b"]:
+			if not line.has(key) or typeof(line[key]) != TYPE_VECTOR2I or not valid_cell(line[key]):
+				return "Checkpoint line endpoints must be cells inside the grid."
+		if line["a"] == line["b"]:
+			return "Choose two different checkpoint line endpoints."
 	var occupied := {}
 	if valid_cell(spawn):
 		occupied[spawn] = true
@@ -173,7 +249,7 @@ func playtest_error() -> String:
 		return error
 	if not valid_cell(spawn):
 		return "Place a player spawn before playtesting."
-	var position := cell_position(spawn)
+	var position := spawn_position()
 	for segment in segments:
 		var points := sample_segment(segment)
 		for index in range(points.size() - 1):

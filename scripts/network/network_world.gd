@@ -25,7 +25,7 @@ func _create_player(data: Variant) -> Node:
 	var ball := PlayerScene.instantiate() as RigidBody2D
 	ball.set_script(NetworkPlayerScript)
 	ball.name = str(peer_id)
-	ball.position = LevelDocument.cell_position(document.spawn)
+	ball.position = document.spawn_position()
 	ball.scale = Vector2.ONE * 1.18
 	ball.spawn_position = ball.position
 	ball.network_position = ball.position

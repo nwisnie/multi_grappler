@@ -1,5 +1,5 @@
 extends Node2D
-## Each local player must pass every hoop in order before a lap can finish.
+## Each local player must pass every checkpoint in order before a lap can finish.
 
 signal checkpoint_reached(number: int)
 signal lap_completed(number: int)
@@ -27,7 +27,10 @@ func _ready() -> void:
 		hoop.number = index + 1
 		hoop.is_start = index == 0
 		hoop.is_finish = index + 1 == document.finish_checkpoint
-		hoop.position = LevelDocument.cell_position(document.spawn if index == 0 else document.checkpoints[index - 1])
+		hoop.position = document.checkpoint_position(index + 1)
+		if document.checkpoint_lines.has(index + 1):
+			var line: Dictionary = document.checkpoint_lines[index + 1]
+			hoop.line_points = PackedVector2Array([LevelDocument.cell_position(line["a"]) - hoop.position, LevelDocument.cell_position(line["b"]) - hoop.position])
 		add_child(hoop)
 		hoops.append(hoop)
 	var layer := CanvasLayer.new()
@@ -48,6 +51,9 @@ func reset() -> void:
 	_update_hoops()
 
 func next_position() -> Vector2:
+	if document.checkpoint_lines.has(next_number):
+		var line: Dictionary = document.checkpoint_lines[next_number]
+		return Geometry2D.get_closest_point_to_segment(player.global_position, LevelDocument.cell_position(line["a"]), LevelDocument.cell_position(line["b"]))
 	return hoops[next_number - 1].global_position
 
 func _physics_process(delta: float) -> void:
@@ -68,24 +74,57 @@ func advance_between(from: Vector2, to: Vector2) -> void:
 	# along the entire segment, so an already-passed later hoop cannot count.
 	var start := from
 	for crossing in range(hoops.size()):
-		var motion := to - start
-		var length_squared := motion.length_squared()
-		var relative := start - next_position()
-		# Standing in overlapping hoops cannot award checkpoints or farm laps.
-		if length_squared < 0.0001 or relative.length_squared() <= PASS_RADIUS * PASS_RADIUS:
-			return
-		var b := relative.dot(motion)
-		var c := relative.length_squared() - PASS_RADIUS * PASS_RADIUS
-		var discriminant := b * b - length_squared * c
-		if discriminant < 0.0:
-			return
-		var fraction := (-b - sqrt(discriminant)) / length_squared
-		if fraction < 0.0 or fraction > 1.0:
+		var fraction := _crossing_fraction(start, to)
+		if fraction < 0.0:
 			return
 		start = start.lerp(to, fraction)
 		_reach_checkpoint()
 		if finished:
 			return
+
+func _crossing_fraction(from: Vector2, to: Vector2) -> float:
+	var motion := to - from
+	if motion.length_squared() < 0.0001:
+		return -1.0
+	if not document.checkpoint_lines.has(next_number):
+		return _circle_entry(from, motion, hoops[next_number - 1].global_position, PASS_RADIUS)
+	# A swept ball against a finite line is a capsule: a strip plus two end caps.
+	var line: Dictionary = document.checkpoint_lines[next_number]
+	var a := LevelDocument.cell_position(line["a"])
+	var b := LevelDocument.cell_position(line["b"])
+	var radius := LevelDocument.PLAYER_RADIUS
+	if from.distance_squared_to(Geometry2D.get_closest_point_to_segment(from, a, b)) <= radius * radius:
+		return -1.0
+	var tangent := (b - a).normalized()
+	var normal := tangent.orthogonal()
+	var perpendicular := (from - a).dot(normal)
+	var speed := motion.dot(normal)
+	var earliest := 2.0
+	if absf(speed) > 0.00001:
+		for side in [-radius, radius]:
+			var fraction: float = (side - perpendicular) / speed
+			if fraction >= 0.0 and fraction <= 1.0:
+				var along := (from + motion * fraction - a).dot(tangent)
+				if along >= 0.0 and along <= a.distance_to(b):
+					earliest = minf(earliest, fraction)
+	for endpoint in [a, b]:
+		var fraction := _circle_entry(from, motion, endpoint, radius)
+		if fraction >= 0.0:
+			earliest = minf(earliest, fraction)
+	return earliest if earliest <= 1.0 else -1.0
+
+func _circle_entry(from: Vector2, motion: Vector2, center: Vector2, radius: float) -> float:
+	var relative := from - center
+	if relative.length_squared() <= radius * radius:
+		return -1.0
+	var length_squared := motion.length_squared()
+	var b := relative.dot(motion)
+	var c := relative.length_squared() - radius * radius
+	var discriminant := b * b - length_squared * c
+	if discriminant < 0.0:
+		return -1.0
+	var fraction := (-b - sqrt(discriminant)) / length_squared
+	return fraction if fraction >= 0.0 and fraction <= 1.0 else -1.0
 
 func _reach_checkpoint() -> void:
 	var reached := next_number

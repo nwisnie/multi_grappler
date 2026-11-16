@@ -190,14 +190,34 @@ static func _split_parameters(a: Vector2, b: Vector2, c: Vector2, d: Vector2, sp
 static func _key(point: Vector2) -> Vector2i:
 	return Vector2i(roundi(point.x * KEY_SCALE), roundi(point.y * KEY_SCALE))
 
-static func _weld_key(point: Vector2, lookup: Dictionary) -> Vector2i:
+static func _weld_root(key: Vector2i, parents: Dictionary) -> Vector2i:
+	var root := key
+	while parents[root] != root:
+		root = parents[root]
+	while parents[key] != key:
+		var next: Vector2i = parents[key]
+		parents[key] = root
+		key = next
+	return root
+
+static func _weld_key(point: Vector2, lookup: Dictionary, parents: Dictionary) -> Vector2i:
 	var precise := _key(point)
-	var bin_key := Vector2i(floori(float(precise.x) / 20.0), floori(float(precise.y) / 20.0))
+	if parents.has(precise):
+		return precise
+	parents[precise] = precise
+	var span := EPSILON * KEY_SCALE
+	var bin_key := Vector2i(floori(float(precise.x) / span), floori(float(precise.y) / span))
 	for y in range(-1, 2):
 		for x in range(-1, 2):
 			for candidate in lookup.get(bin_key + Vector2i(x, y), []):
-				if Vector2(precise).distance_squared_to(Vector2(candidate)) <= 100.0:
-					return candidate
+				if Vector2(precise).distance_squared_to(Vector2(candidate)) <= span * span:
+					var root := _weld_root(precise, parents)
+					var other := _weld_root(candidate, parents)
+					# Deterministic representatives, independent of segment order.
+					if root.x < other.x or (root.x == other.x and root.y < other.y):
+						parents[other] = root
+					else:
+						parents[root] = other
 	if not lookup.has(bin_key):
 		lookup[bin_key] = []
 	lookup[bin_key].append(precise)
@@ -230,6 +250,7 @@ static func union_boundaries(polygons: Array[PackedVector2Array]) -> Dictionary:
 	var unique := {}
 	var outgoing := {}
 	var weld_lookup := {}
+	var weld_parents := {}
 	for edge_id in range(edges.size()):
 		var edge := edges[edge_id]
 		var a: Vector2 = edge["a"]
@@ -256,19 +277,27 @@ static func union_boundaries(polygons: Array[PackedVector2Array]) -> Dictionary:
 			if _covered(middle, normal if left else -normal, polygons, polygon_index, edge["polygon"], winding, polygon_bounds):
 				continue
 			# Float32 intersections computed from opposite edges can differ by a
-			# few thousandths at world coordinates near 12,000. Weld those results.
-			var start_key := _weld_key(start if left else end, weld_lookup)
-			var end_key := _weld_key(end if left else start, weld_lookup)
-			if start_key == end_key:
-				continue
-			var identity := "%s/%s" % [start_key, end_key]
-			if unique.has(identity):
-				continue
-			unique[identity] = true
-			if not outgoing.has(start_key):
-				outgoing[start_key] = []
-			outgoing[start_key].append(boundary.size())
+			# few hundredths at world coordinates near 12,000. Weld those results.
+			var start_key := _weld_key(start if left else end, weld_lookup, weld_parents)
+			var end_key := _weld_key(end if left else start, weld_lookup, weld_parents)
 			boundary.append({"a": start_key, "b": end_key})
+	# Resolve all nearby endpoints together, including chains of tiny fragments.
+	# Matching only an earlier representative can leave the same joint split.
+	var fragments := boundary
+	boundary = []
+	for fragment in fragments:
+		var start_key := _weld_root(fragment["a"], weld_parents)
+		var end_key := _weld_root(fragment["b"], weld_parents)
+		if start_key == end_key:
+			continue
+		var identity := "%s/%s" % [start_key, end_key]
+		if unique.has(identity):
+			continue
+		unique[identity] = true
+		if not outgoing.has(start_key):
+			outgoing[start_key] = []
+		outgoing[start_key].append(boundary.size())
+		boundary.append({"a": start_key, "b": end_key})
 	var contours: Array[PackedVector2Array] = []
 	var visited := {}
 	for first_id in range(boundary.size()):
@@ -309,10 +338,24 @@ static func union_boundaries(polygons: Array[PackedVector2Array]) -> Dictionary:
 				if distance < nearest:
 					nearest = distance
 					nearest_key = candidate_key
-			return {"error": "Terrain boundaries could not be joined. Try moving the overlapping segments.", "debug": [end_key, nearest_key, nearest, boundary.size(), points.size()]}
+			return {"error": "Terrain edges could not be joined. Adjust the nearby curve handles or endpoints.", "error_points": _unjoined_points(boundary, first, end_key), "debug": [end_key, nearest_key, nearest, boundary.size(), points.size()]}
 		if points.size() >= 3:
 			contours.append(points)
 	return {"error": "", "contours": contours}
+
+static func _unjoined_points(boundary: Array[Dictionary], first: Vector2i, last: Vector2i) -> PackedVector2Array:
+	var balance := {}
+	for edge in boundary:
+		balance[edge["a"]] = int(balance.get(edge["a"], 0)) + 1
+		balance[edge["b"]] = int(balance.get(edge["b"], 0)) - 1
+	var points := PackedVector2Array()
+	for key in balance:
+		if balance[key] != 0:
+			points.append(Vector2(key) / KEY_SCALE)
+	if points.is_empty():
+		points.append(Vector2(first) / KEY_SCALE)
+		points.append(Vector2(last) / KEY_SCALE)
+	return points
 
 static func build_runtime(document: LevelDocument) -> Dictionary:
 	var error := document.validate()
@@ -321,6 +364,7 @@ static func build_runtime(document: LevelDocument) -> Dictionary:
 	var polygons := polygons_for(document)
 	var result := union_boundaries(polygons)
 	if not result["error"].is_empty():
+		result["segment_indices"] = segments_near_points(document, result.get("error_points", PackedVector2Array()))
 		return result
 	var body := StaticBody2D.new()
 	body.name = "CustomTerrain"
@@ -335,3 +379,15 @@ static func build_runtime(document: LevelDocument) -> Dictionary:
 		collision.polygon = contour
 		body.add_child(collision)
 	return {"error": "", "body": body, "polygons": polygons, "contours": result["contours"]}
+
+static func segments_near_points(document: LevelDocument, points: PackedVector2Array) -> Array[int]:
+	var indices: Array[int] = []
+	for index in range(document.segments.size()):
+		var samples := LevelDocument.sample_segment(document.segments[index])
+		var distance := INF
+		for point in points:
+			for step in range(samples.size() - 1):
+				distance = minf(distance, point.distance_to(Geometry2D.get_closest_point_to_segment(point, samples[step], samples[step + 1])))
+		if distance <= LevelDocument.HALF_WIDTH + 1.0:
+			indices.append(index)
+	return indices

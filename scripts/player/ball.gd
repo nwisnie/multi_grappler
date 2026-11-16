@@ -11,7 +11,7 @@ const SUPPORT_MIN_UP := 0.05
 const CAMERA_FOLLOW_SPEED := 4.5
 const CAMERA_LOOK_AHEAD := 80.0
 const CAMERA_VERTICAL_OFFSET := -30.0
-const CAMERA_BASE_ZOOM := Vector2(0.65, 0.65)
+const CAMERA_BASE_ZOOM := Vector2(0.5, 0.5)
 const CAMERA_MAX_ZOOM_OUT := Vector2(0.45, 0.45)
 const CAMERA_ZOOM_SPEED := 3.5
 const GRAPPLE_MAX_DISTANCE := 2200.0
@@ -146,6 +146,7 @@ var collision_squash_amount: float = 0.0
 var collision_squash_normal: Vector2 = Vector2.UP
 var previous_contact_count: int = 0
 var camera_shake_amount: float = 0.0
+var camera_zoom_preview := false
 var idle_breath_time: float = 0.0
 var heart_beat_time: float = 0.0
 
@@ -362,8 +363,21 @@ func _clear_control_input_state() -> void:
 		_end_jab_attack()
 	_update_jab_meter()
 
+func set_camera_zoom(value: float, preview: bool = false) -> void:
+	initial_camera_zoom = Vector2.ONE * value
+	camera_zoom_preview = preview
+	if is_instance_valid(camera):
+		camera.zoom = _camera_zoom_target()
+		# Paused players do not run their normal camera update.
+		camera.force_update_scroll()
+
+func _camera_zoom_target() -> Vector2:
+	if camera_zoom_preview:
+		return initial_camera_zoom
+	var speed_ratio := clampf(linear_velocity.length() / (MAX_GROUND_SPEED * 1.35), 0.0, 1.0)
+	return initial_camera_zoom.lerp(speed_zoom_out, speed_ratio) + interaction_zoom_offset
+
 func _update_camera(delta: float) -> void:
-	var speed_ratio: float = clampf(linear_velocity.length() / (MAX_GROUND_SPEED * 1.35), 0.0, 1.0)
 	var look_ahead: Vector2 = Vector2(
 		clampf(linear_velocity.x / MAX_GROUND_SPEED, -1.0, 1.0) * CAMERA_LOOK_AHEAD,
 		CAMERA_VERTICAL_OFFSET
@@ -375,7 +389,7 @@ func _update_camera(delta: float) -> void:
 	var follow_weight: float = 1.0 - exp(-CAMERA_FOLLOW_SPEED * delta)
 	camera.global_position = camera.global_position.lerp(camera_target, follow_weight)
 
-	var zoom_target: Vector2 = initial_camera_zoom.lerp(speed_zoom_out, speed_ratio) + interaction_zoom_offset
+	var zoom_target := _camera_zoom_target()
 	var zoom_weight: float = 1.0 - exp(-CAMERA_ZOOM_SPEED * delta)
 	camera.zoom = camera.zoom.lerp(zoom_target, zoom_weight)
 

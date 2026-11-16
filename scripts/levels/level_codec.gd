@@ -4,10 +4,12 @@ extends RefCounted
 ## Payload: version u8, segment count u16 LE, orb count u8, spawn x/y u8,
 ## segments [kind,a.x,a.y,b.x,b.y,(m.x,m.y)], orbs [x,y]. No spawn = 255,255.
 ## Optional race trailer: 'R' u8, count u8, laps u8, finish number u8, cells [x,y].
+## Optional line trailer after race: 'L', count, spawn percentage, [number,ax,ay,bx,by].
 
 const PREFIX := "MG1-"
 const RACE_TAG := 82
-const MAX_PAYLOAD := 6 + LevelDocument.MAX_SEGMENTS * 7 + LevelDocument.MAX_ORBS * 2 + 4 + LevelDocument.MAX_CHECKPOINTS * 2
+const LINE_TAG := 76
+const MAX_PAYLOAD := 6 + LevelDocument.MAX_SEGMENTS * 7 + LevelDocument.MAX_ORBS * 2 + 4 + LevelDocument.MAX_CHECKPOINTS * 2 + 3 + (LevelDocument.MAX_CHECKPOINTS + 1) * 5
 const MAX_CODE_LENGTH := 16384
 
 static func encode_level(document: LevelDocument) -> String:
@@ -29,11 +31,18 @@ static func encode_level(document: LevelDocument) -> String:
 	for orb in document.orbs:
 		payload.append(orb.x)
 		payload.append(orb.y)
-	if not document.checkpoints.is_empty() or document.race_laps != 1:
+	if not document.checkpoints.is_empty() or document.race_laps != 1 or not document.checkpoint_lines.is_empty():
 		payload.append_array(PackedByteArray([RACE_TAG, document.checkpoints.size(), document.race_laps, document.finish_checkpoint]))
 		for checkpoint in document.checkpoints:
 			payload.append(checkpoint.x)
 			payload.append(checkpoint.y)
+	if not document.checkpoint_lines.is_empty():
+		payload.append_array(PackedByteArray([LINE_TAG, document.checkpoint_lines.size(), document.spawn_line_position]))
+		for number in range(1, document.checkpoints.size() + 2):
+			if not document.checkpoint_lines.has(number):
+				continue
+			var line: Dictionary = document.checkpoint_lines[number]
+			payload.append_array(PackedByteArray([number, line["a"].x, line["a"].y, line["b"].x, line["b"].y]))
 	return PREFIX + Marshalls.raw_to_base64(payload.compress(FileAccess.COMPRESSION_DEFLATE))
 
 static func decode_level(code: String) -> Dictionary:
@@ -90,11 +99,25 @@ static func decode_level(code: String) -> Dictionary:
 		document.race_laps = int(payload[cursor + 2])
 		document.finish_checkpoint = int(payload[cursor + 3])
 		cursor += 4
-		if checkpoint_count > LevelDocument.MAX_CHECKPOINTS or cursor + checkpoint_count * 2 != payload.size():
+		if checkpoint_count > LevelDocument.MAX_CHECKPOINTS or cursor + checkpoint_count * 2 > payload.size():
 			return {"error": "The race checkpoint data is damaged or exceeds the limit."}
 		for index in range(checkpoint_count):
 			document.checkpoints.append(Vector2i(payload[cursor], payload[cursor + 1]))
 			cursor += 2
+	if cursor < payload.size():
+		if cursor + 3 > payload.size() or payload[cursor] != LINE_TAG:
+			return {"error": "The level code has unexpected checkpoint line data."}
+		var line_count := int(payload[cursor + 1])
+		document.spawn_line_position = int(payload[cursor + 2])
+		cursor += 3
+		if line_count < 1 or line_count > document.checkpoints.size() + 1 or cursor + line_count * 5 != payload.size():
+			return {"error": "The checkpoint line data is damaged or exceeds the limit."}
+		for index in range(line_count):
+			var number := int(payload[cursor])
+			if document.checkpoint_lines.has(number):
+				return {"error": "The level code repeats a checkpoint line."}
+			document.checkpoint_lines[number] = {"a": Vector2i(payload[cursor + 1], payload[cursor + 2]), "b": Vector2i(payload[cursor + 3], payload[cursor + 4])}
+			cursor += 5
 	var error := document.validate()
 	if not error.is_empty():
 		return {"error": error}
