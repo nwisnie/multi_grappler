@@ -12,6 +12,8 @@ const ButtonPulse := preload("res://scripts/ui/menu_button_pulse.gd")
 const MenuSlide := preload("res://scripts/ui/menu_slide.gd")
 const MenuBackground := preload("res://scripts/ui/menu_background.gd")
 const SavedLevels := preload("res://scripts/levels/saved_levels.gd")
+const LevelTimes := preload("res://scripts/levels/level_times.gd")
+const DialogStyle := preload("res://scripts/ui/menu_dialog_style.gd")
 
 enum View { COMMUNITY, SAVED, MY_LEVELS }
 
@@ -44,6 +46,13 @@ var last_level_metadata: Dictionary = {}
 var entries: Dictionary = {}
 var description: Label
 var content: MarginContainer
+var time_records: Node
+var leaderboard_client: LibraryClient
+var leaderboard_dialog: ConfirmationDialog
+var leaderboard_text: Label
+var leaderboard_level_id := ""
+var time_labels: Dictionary = {}
+var leaderboard_buttons: Dictionary = {}
 
 func _ready() -> void:
 	theme = MenuTheme.get_theme()
@@ -106,6 +115,74 @@ func _ready() -> void:
 	account_session = get_node("/root/AccountSession")
 	known_user_id = _signed_in_user_id()
 	account_session.changed.connect(_account_changed)
+	if time_records == null:
+		time_records = LevelTimes.new()
+		add_child(time_records)
+	time_records.changed.connect(_times_changed)
+	_build_leaderboard()
+
+func _build_leaderboard() -> void:
+	leaderboard_client = LibraryClient.new()
+	add_child(leaderboard_client)
+	leaderboard_client.completed.connect(_received_leaderboard)
+	leaderboard_dialog = ConfirmationDialog.new()
+	leaderboard_dialog.title = "Top Times"
+	DialogStyle.apply(leaderboard_dialog, true)
+	leaderboard_dialog.get_cancel_button().hide()
+	leaderboard_dialog.get_ok_button().text = "Close"
+	add_child(leaderboard_dialog)
+	leaderboard_text = _label("")
+	leaderboard_text.custom_minimum_size = Vector2(480, 100)
+	leaderboard_dialog.add_child(leaderboard_text)
+	leaderboard_dialog.visibility_changed.connect(func() -> void:
+		if not leaderboard_dialog.visible:
+			leaderboard_client.cancel()
+	)
+
+func _show_leaderboard(id: String) -> void:
+	var entry: Dictionary = entries.get(id, {})
+	leaderboard_level_id = str(entry.get("id", entry.get("source_id", "")))
+	leaderboard_dialog.title = "Top Times · " + str(entry.get("title", "Level")).left(64)
+	leaderboard_text.text = "Loading times..."
+	leaderboard_dialog.popup_centered(Vector2i(560, 0))
+	leaderboard_client.fetch_times(leaderboard_level_id)
+
+func _received_leaderboard(_code: int, payload: Dictionary, error: String) -> void:
+	if not leaderboard_dialog.visible:
+		return
+	if not error.is_empty():
+		leaderboard_text.text = error
+		return
+	if not payload.get("leaderboard") is Array:
+		leaderboard_text.text = "Times could not be loaded. Close and try again."
+		return
+	var lines := PackedStringArray()
+	for entry in payload["leaderboard"].slice(0, 10):
+		if entry is Dictionary:
+			var yours := " (you)" if entry.get("user_id", "") == _signed_in_user_id() else ""
+			lines.append("%d.  %s%s  ·  %s" % [int(entry.get("rank", lines.size() + 1)), str(entry.get("username", "Player")).left(24), yours, LevelTimes.format_time(entry.get("time_ms"))])
+	if lines.is_empty():
+		lines.append("No times yet. Be the first to finish!")
+	lines.append("")
+	lines.append("Your best: " + LevelTimes.format_time(payload.get("personal_time_ms")) if not _signed_in_user_id().is_empty() else "Sign in before starting a run to save your time.")
+	leaderboard_text.text = "\n".join(lines)
+	time_records.cache_time(leaderboard_level_id, payload)
+
+func _times_changed() -> void:
+	if not visible:
+		return
+	for id in time_labels:
+		var entry: Dictionary = entries.get(id, {})
+		var source := str(entry.get("id", entry.get("source_id", "")))
+		var summary: Dictionary = time_records.summary(source)
+		var personal := LevelTimes.format_time(summary.get("personal_time_ms")) if not _signed_in_user_id().is_empty() else "Sign in"
+		var byline := "By " + str(entry.get("author", "Anonymous")).left(32)
+		var created := str(entry.get("created_at", "")).left(10)
+		if not created.is_empty():
+			byline += "   /   Uploaded: " + created
+		time_labels[id].text = "%s   /   Top Time: %s   /   Your best: %s" % [byline, LevelTimes.format_time(summary.get("top_time_ms")), personal]
+		if not time_records.summary_error.is_empty():
+			time_labels[id].text += "   /   Times unavailable"
 
 func _label(text: String) -> Label:
 	var label := Label.new()
@@ -151,6 +228,7 @@ func open(for_selection: bool = false, view: int = View.COMMUNITY) -> void:
 	back_button.grab_focus.call_deferred()
 
 func close() -> void:
+	leaderboard_dialog.hide()
 	client.cancel()
 	loading_level = false
 	saving_level = false
@@ -159,6 +237,7 @@ func close() -> void:
 	hide()
 
 func dismiss() -> void:
+	leaderboard_dialog.hide()
 	client.cancel()
 	loading_level = false
 	saving_level = false
@@ -190,6 +269,7 @@ func _account_changed() -> void:
 	if known_user_id == user_id:
 		return
 	known_user_id = user_id
+	leaderboard_dialog.hide()
 	if visible:
 		refresh()
 
@@ -234,6 +314,8 @@ func refresh() -> void:
 	_update_view_controls()
 	_render_levels()
 	if current_view == View.SAVED:
+		if not _signed_in_user_id().is_empty():
+			time_records.refresh_summaries()
 		if not saved_levels.load_error.is_empty():
 			status.text = saved_levels.load_error
 		return
@@ -323,6 +405,7 @@ func _received(_response_code: int, payload: Dictionary, error: String) -> void:
 			continue
 		seen[id] = true
 		remote_levels.append(entry.duplicate(true))
+	time_records.cache_levels(remote_levels)
 	_render_levels()
 
 func _open_document(document: LevelDocument, metadata: Dictionary) -> void:
@@ -369,6 +452,8 @@ func _visible_entries() -> Array[Dictionary]:
 func _render_levels() -> void:
 	play_buttons.clear()
 	save_buttons.clear()
+	time_labels.clear()
+	leaderboard_buttons.clear()
 	entries.clear()
 	for child in rows.get_children():
 		rows.remove_child(child)
@@ -390,19 +475,20 @@ func _render_levels() -> void:
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(info)
 		info.add_child(_label(str(entry["title"]).left(64)))
-		var byline := "By " + str(entry.get("author", "Anonymous")).left(32)
-		var created := str(entry.get("created_at", "")).left(10)
-		if not created.is_empty():
-			byline += " · " + created
-		info.add_child(_label(byline))
+		var times := _label("")
+		time_labels[id] = times
+		info.add_child(times)
 		var play := _button("Select" if selecting_level else "Play", _play.bind(id))
 		play_buttons.append(play)
+		var leaderboard := _button("Top Times", _show_leaderboard.bind(id))
+		leaderboard_buttons[id] = leaderboard
 		if local:
-			row.add_child(play)
+			row.add_child(_button_pair(play, leaderboard))
 		else:
 			var save := _button("Save", _save.bind(id))
 			save_buttons[id] = save
-			row.add_child(_button_pair(play, save))
+			row.add_child(_button_group([play, save, leaderboard]))
+	_times_changed()
 	_busy(request_busy)
 	var count := rows.get_child_count()
 	match current_view:

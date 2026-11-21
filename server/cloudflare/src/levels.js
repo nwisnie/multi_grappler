@@ -24,6 +24,7 @@ function validatePayload(bytes) {
   let spawn = [bytes[4] + 0.5, bytes[5] + 0.5];
   const terrain = [];
   let offset = 6;
+  let hasRace = false;
   for (let index = 0; index < segments; index++) {
     if (offset + 5 > bytes.length) invalid();
     const kind = bytes[offset++];
@@ -56,6 +57,7 @@ function validatePayload(bytes) {
   if (offset < bytes.length) {
     if (offset + 4 > bytes.length || bytes[offset++] !== 82) invalid();
     const count = bytes[offset++], laps = bytes[offset++], finish = bytes[offset++];
+    hasRace = count > 0;
     if (count > 128 || laps < 1 || laps > 50 || offset + count * 2 > bytes.length ||
         (finish !== 1 && (count === 0 || finish !== count + 1 || laps !== 1))) invalid();
     const occupied = new Set([`${bytes[4]},${bytes[5]}`]);
@@ -90,9 +92,10 @@ function validatePayload(bytes) {
       }
     }
   }
+  return { hasRace };
 }
 
-async function decodeCode(code) {
+async function decodeCode(code, requireRace = false) {
   if (typeof code !== "string" || code.length > 16384 || !/^MG1-[A-Za-z0-9+/]+={0,2}$/.test(code) || (code.length - 4) % 4) {
     throw new RequestError("Provide a valid MG1- level code.");
   }
@@ -105,7 +108,8 @@ async function decodeCode(code) {
   } catch {
     throw new RequestError("The level code is damaged or exceeds the level limits.");
   }
-  validatePayload(payload);
+  const { hasRace } = validatePayload(payload);
+  if (requireRace && !hasRace) throw new RequestError("This level has no race to finish.");
   return payload;
 }
 
@@ -117,6 +121,26 @@ function name(value, maximum) {
   return clean;
 }
 
+const SUMMARY = `SELECT levels.id, title, author, author_id, created_at,
+  (SELECT MIN(time_ms) FROM level_times WHERE level_id = levels.id) AS top_time_ms,
+  (SELECT time_ms FROM level_times WHERE level_id = levels.id AND user_id = ?) AS personal_time_ms
+  FROM levels`;
+
+function timeQueries(db, id, userId) {
+  return [
+    db.prepare(`SELECT level_times.user_id, users.username, time_ms, achieved_at FROM level_times
+      JOIN users ON users.id = level_times.user_id WHERE level_id = ?
+      ORDER BY time_ms, achieved_at, level_times.user_id LIMIT 10`).bind(id),
+    db.prepare("SELECT time_ms FROM level_times WHERE level_id = ? AND user_id = ?").bind(id, userId),
+  ];
+}
+
+function timeResponse(results) {
+  const leaderboard = results[0].results.map((entry, index) => ({ rank: index + 1, ...entry }));
+  return { leaderboard, top_time_ms: leaderboard[0]?.time_ms ?? null,
+    personal_time_ms: results[1].results[0]?.time_ms ?? null };
+}
+
 export async function levels(request, env) {
   const origin = request.headers.get("Origin");
   const allowed = (env.ALLOWED_ORIGINS || "").split(",").map(value => value.trim());
@@ -125,27 +149,49 @@ export async function levels(request, env) {
   if (origin && !allowed.includes(origin)) return json({ error: "Origin not allowed." }, 403);
   const path = new URL(request.url).pathname;
   const collection = path === "/levels";
-  const match = /^\/levels\/([a-f0-9]{64})$/.exec(path);
+  const match = /^\/levels\/([a-f0-9]{64})(\/times)?$/.exec(path);
+  const times = Boolean(match?.[2]);
   if (!collection && !match) return json({ error: "Level not found." }, 404);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: {
-    ...headers, "Access-Control-Allow-Methods": collection ? "GET, POST, OPTIONS" : "GET, OPTIONS",
+    ...headers, "Access-Control-Allow-Methods": collection || times ? "GET, POST, OPTIONS" : "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Max-Age": "86400",
   } });
-  if (request.method !== "GET" && !(collection && request.method === "POST")) return json({ error: "Method not allowed." }, 405);
+  if (request.method !== "GET" && !((collection || times) && request.method === "POST")) return json({ error: "Method not allowed." }, 405);
   const key = request.headers.get("CF-Connecting-IP") || "local";
-  const limiter = request.method === "POST" ? env.UPLOAD_LIMITER : env.CONNECT_LIMITER;
+  const limiter = request.method === "POST" && collection ? env.UPLOAD_LIMITER : env.CONNECT_LIMITER;
   if (!(await limiter.limit({ key })).success) return json({ error: "Too many requests. Try again in a minute." }, 429);
   if (!env.LEVELS_DB) return json({ error: "The level library is not configured yet." }, 503);
   try {
+    // Optional authentication personalizes reads without accepting a client user ID.
+    const user = request.method === "POST" || request.headers.has("Authorization") ? await requireUser(request, env) : null;
+    if (times) {
+      const level = await env.LEVELS_DB.prepare("SELECT level_code FROM levels WHERE id = ?").bind(match[1]).first();
+      if (!level) return json({ error: "This published level is no longer available." }, 404);
+      if (request.method === "GET") return json(timeResponse(await env.LEVELS_DB.batch(timeQueries(env.LEVELS_DB, match[1], user?.id ?? null))));
+      const body = await readJson(request, 1024);
+      if (!Number.isSafeInteger(body.time_ms) || body.time_ms < 1 || body.time_ms > 86400000) {
+        throw new RequestError("Provide a completion time in whole milliseconds between 1 and 86400000.");
+      }
+      await decodeCode(level.level_code, true);
+      // The conditional upsert cannot replace a faster best, including concurrent retries.
+      // The batch returns the ranking from the same transaction as the submitted best.
+      const results = await env.LEVELS_DB.batch([
+        env.LEVELS_DB.prepare(`INSERT INTO level_times (level_id, user_id, time_ms, achieved_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT(level_id, user_id) DO UPDATE SET time_ms = excluded.time_ms, achieved_at = excluded.achieved_at
+          WHERE excluded.time_ms < level_times.time_ms RETURNING time_ms`)
+          .bind(match[1], user.id, body.time_ms, new Date().toISOString()),
+        ...timeQueries(env.LEVELS_DB, match[1], user.id),
+      ]);
+      return json({ ...timeResponse(results.slice(1)), improved: results[0].results.length > 0 });
+    }
     if (request.method === "GET") {
       if (collection) {
-        const { results } = await env.LEVELS_DB.prepare("SELECT id, title, author, author_id, created_at FROM levels ORDER BY created_at DESC, id LIMIT 100").all();
+        const { results } = await env.LEVELS_DB.prepare(SUMMARY + " ORDER BY created_at DESC, levels.id LIMIT 100").bind(user?.id ?? null).all();
         return json({ levels: results, capacity: MAX_LEVELS });
       }
       const level = await env.LEVELS_DB.prepare("SELECT id, title, author, author_id, created_at, level_code FROM levels WHERE id = ?").bind(match[1]).first();
       return level ? json({ level }) : json({ error: "This level is no longer available. Refresh the library." }, 404);
     }
-    const user = await requireUser(request, env);
     const body = await readJson(request, MAX_BODY);
     const title = name(body.title, 64);
     const payload = await decodeCode(body.level_code);

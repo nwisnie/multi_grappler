@@ -14,6 +14,8 @@ var player: RigidBody2D
 var restart_pending := false
 var race: Node2D
 var terrain_error := {}
+var time_records: Node
+var leaderboard_id := ""
 
 func prepare(value: LevelDocument) -> String:
 	terrain_error.clear()
@@ -76,6 +78,8 @@ func _start_race(ball: RigidBody2D) -> void:
 	race.name = "RaceProgress"
 	race.document = document
 	race.player = ball
+	race.time_records = time_records
+	race.leaderboard_id = leaderboard_id
 	add_child(race)
 
 func _physics_process(_delta: float) -> void:

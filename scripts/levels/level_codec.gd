@@ -12,6 +12,19 @@ const LINE_TAG := 76
 const MAX_PAYLOAD := 6 + LevelDocument.MAX_SEGMENTS * 7 + LevelDocument.MAX_ORBS * 2 + 4 + LevelDocument.MAX_CHECKPOINTS * 2 + 3 + (LevelDocument.MAX_CHECKPOINTS + 1) * 5
 const MAX_CODE_LENGTH := 16384
 
+static func publication_id(document: LevelDocument) -> String:
+	return publication_id_from_code(encode_level(document))
+
+static func publication_id_from_code(code: String) -> String:
+	# Callers supply a code that has already passed the codec's validation.
+	if code.is_empty():
+		return ""
+	var payload := Marshalls.base64_to_raw(code.substr(PREFIX.length())).decompress_dynamic(MAX_PAYLOAD, FileAccess.COMPRESSION_DEFLATE)
+	var hash := HashingContext.new()
+	hash.start(HashingContext.HASH_SHA256)
+	hash.update(payload)
+	return hash.finish().hex_encode()
+
 static func encode_level(document: LevelDocument) -> String:
 	if not document.validate().is_empty():
 		return ""

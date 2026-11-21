@@ -25,7 +25,7 @@ async function runtime(t, authLimit = 1000, registrationLimit = 1000) {
   }] }));
   t.after(() => mf.dispose());
   const db = await mf.getD1Database("LEVELS_DB");
-  for (const file of ["0001_levels.sql", "0002_accounts.sql"]) {
+  for (const file of ["0001_levels.sql", "0002_accounts.sql", "0003_level_times.sql"]) {
     const sql = readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8");
     const statements = sql.match(/CREATE TABLE[\s\S]+?;|CREATE INDEX[^;]+;|CREATE TRIGGER[\s\S]+?END;|ALTER TABLE[^;]+;/g);
     await db.batch(statements.map(statement => db.prepare(statement)));

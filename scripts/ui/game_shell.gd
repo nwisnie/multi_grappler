@@ -15,6 +15,7 @@ const AccountDialog := preload("res://scripts/ui/account_dialog.gd")
 const MenuSlide := preload("res://scripts/ui/menu_slide.gd")
 const MenuBackground := preload("res://scripts/ui/menu_background.gd")
 const SavedLevels := preload("res://scripts/levels/saved_levels.gd")
+const LevelTimes := preload("res://scripts/levels/level_times.gd")
 
 enum Screen { MAIN_MENU, TUTORIAL, EDITOR, PLAYTEST, MULTIPLAYER, LEVEL_BROWSER, COMMUNITY_LEVEL }
 
@@ -26,6 +27,7 @@ var editor: GridLevelEditor
 var title_screen: Control
 var level_browser: LevelBrowser
 var saved_levels := SavedLevels.new()
+var time_records: LevelTimes
 var browsing_for_host := false
 var active_level_metadata: Dictionary = {}
 var return_browser_view: int = LevelBrowser.View.COMMUNITY
@@ -85,6 +87,8 @@ var resume_waiting_for_release := false
 
 func _ready() -> void:
 	account_session = get_node("/root/AccountSession")
+	time_records = LevelTimes.new()
+	add_child(time_records)
 	saved_levels.bind_account(account_session)
 	saved_levels.load_levels()
 	# UI remains responsive while the gameplay subtree is paused.
@@ -107,6 +111,7 @@ func _ready() -> void:
 	level_browser = LevelBrowser.new()
 	level_browser.background = menu_background
 	level_browser.saved_levels = saved_levels
+	level_browser.time_records = time_records
 	menu_layer.add_child(level_browser)
 	level_browser.back_requested.connect(_leave_level_browser)
 	level_browser.play_requested.connect(play_community_level)
@@ -914,6 +919,8 @@ func play_community_level(document: LevelDocument) -> void:
 	_dispose_world()
 	screen = Screen.COMMUNITY_LEVEL
 	active_level_metadata = level_browser.last_level_metadata.duplicate(true)
+	custom.time_records = time_records
+	custom.leaderboard_id = str(active_level_metadata.get("id", active_level_metadata.get("source_id", LevelCodec.publication_id(document))))
 	world = custom
 	world.process_mode = Node.PROCESS_MODE_PAUSABLE
 	custom.player_spawned.connect(_apply_player_settings)
@@ -971,6 +978,9 @@ func _start_network_world(code: String, level_code: String, hosting: bool) -> vo
 		active_level_metadata = host_level_metadata.duplicate(true)
 	world = custom
 	custom.player_spawned.connect(_network_player_spawned)
+	custom.time_records = time_records
+	custom.leaderboard_id = str(active_level_metadata.get("id", active_level_metadata.get("source_id", LevelCodec.publication_id(decoded["document"]))))
+	time_records.refresh_summaries()
 	add_child(custom)
 	copy_room_button.text = code
 	room_card.show()

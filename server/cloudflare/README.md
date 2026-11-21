@@ -36,10 +36,12 @@ npm run db:remote
 npm run deploy
 ```
 
-The schema is in `migrations/0001_levels.sql` and `migrations/0002_accounts.sql`.
+The schema is in `migrations/0001_levels.sql`, `migrations/0002_accounts.sql`, and
+`migrations/0003_level_times.sql`.
 The second migration adds users, sessions, and account attribution to new levels while
 preserving all existing levels. If you already deployed the library, run `npm run db:remote`
-again to apply the new migration, then deploy this Worker and re-export the game.
+again to apply any pending migrations, then deploy this Worker and re-export the game.
+The third migration adds per-account personal bests and the index for top-10 race times.
 Existing Durable Object migrations remain in `wrangler.jsonc`; D1 migrations run
 separately. No D1 token or Cloudflare credentials
 belong in the game. Re-export/upload the Web game after deploying this backend.
@@ -96,7 +98,9 @@ complete `/levels` URL. The HTML setting takes precedence. The Worker uses the s
 ## Level library behavior
 
 - `GET /levels`: up to 100 level summaries (`id`, `title`, `author`, `author_id`,
-  `created_at`), newest first. Codes are fetched when a player chooses Play, Save,
+  `created_at`, `top_time_ms`, `personal_time_ms`), newest first. Include an optional
+  session Authorization header to receive your personal bests. Missing times are `null`.
+  Codes are fetched when a player chooses Play, Save,
   or Select; saved copies can be played or selected locally.
 - `GET /levels/:id`: metadata and the exact portable `MG1-` code.
 - `POST /levels`: JSON `{ "title": "Course", "level_code": "MG1-..." }` with an
@@ -137,6 +141,48 @@ With `npm run dev` running, additionally set
 `LEVEL_LIBRARY_TEST_URL=http://127.0.0.1:9080/levels` for an actual Godot → Worker → D1
 upload/list/download/play test. Use local D1 for this check: it publishes one test level.
 The check also creates a temporary test account in local D1 and signs it out.
+
+## Race times and leaderboards
+
+Apply `0003_level_times.sql` with `npm run db:local` for development or
+`npm run db:remote` for the hosted database, then deploy the updated Worker and
+re-export the game. Existing publications and accounts are preserved.
+
+- `GET /levels/:id/times`: public top 10, fastest first. Each entry has `rank`,
+  `user_id`, `username`, `time_ms`, and `achieved_at`. The response also has
+  `top_time_ms` and `personal_time_ms` (`null` when absent). An optional account
+  Authorization header includes that account's personal best, even outside the top 10.
+- `POST /levels/:id/times`: JSON `{ "time_ms": 12345 }` with a live account's
+  `Authorization: Bearer <session-token>`. Returns the same ranking and summaries,
+  plus `improved`. The account identity always comes from the session.
+
+Each account has one personal best per published race. Equal or slower submissions
+keep the previous time and timestamp; concurrent submissions keep the fastest time.
+Ties are ordered by the earliest achievement, then account ID. Personal bests beyond
+the top 10 are retained so every player can see their own time. Removing a publication
+also removes its times. Times are positive whole milliseconds, capped at 24 hours.
+The endpoint shares the connection rate limiter and validates body size, account,
+publication, and race checkpoints before accepting a submission.
+
+Community Levels, Saved Levels, and My Levels show the record and personal best, with
+**Top Times** opening the rankings. Saved copies and multiplayer use the publication's
+portable-payload hash, so they share one leaderboard. Saved play stays available if
+the time service is offline. Sign in before starting a run; finishing after switching
+accounts or signing out cannot credit another account. Completed-run submissions
+continue through restarts and navigation, with success or failure shown on the race HUD.
+Editor playtests do not submit times.
+
+Race completion and elapsed time are measured by the Godot client. This initial
+leaderboard does not validate replays or provide server-authoritative anti-cheat.
+
+```sh
+godot --headless --path ../.. --script tests/leaderboard_tests.gd
+```
+
+With the local Worker running, set `LEADERBOARD_TEST_URL=http://127.0.0.1:9080/levels`
+for an end-to-end Godot → Worker → D1 check. It creates a test account and publishes
+a test race; use a local database. `npm test` checks top-10 ranking, personal bests
+outside the top 10, concurrent submissions, authentication, and rejected time data.
 
 ## Accounts
 

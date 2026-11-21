@@ -2,12 +2,126 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 const ORIGIN = "https://wizkinews.com";
-const schema = ["0001_levels.sql", "0002_accounts.sql"].map(path => readFileSync(new URL("../migrations/" + path, import.meta.url), "utf8")).join("\n");
+const schema = ["0001_levels.sql", "0002_accounts.sql", "0003_level_times.sql"].map(path => readFileSync(new URL("../migrations/" + path, import.meta.url), "utf8")).join("\n");
 const encode = bytes => "MG1-" + deflateSync(Buffer.from(bytes)).toString("base64");
 const playable = (x = 10) => encode([1, 1, 0, 0, x, 2, 0, 0, 5, 100, 5]);
+const raceCode = (x = 10) => encode([1, 0, 0, 0, x, 2, 82, 1, 1, 2, 20, 20]);
+
+function timeRequest(mf, id, time, token = mf.testToken, extra = {}) {
+  return mf.dispatchFetch(`https://rooms.example/levels/${id}/times`, { method: "POST",
+    headers: { Origin: ORIGIN, "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+    body: JSON.stringify({ time_ms: time, ...extra }),
+  });
+}
+
+async function racer(db, index) {
+  const id = "racer-" + index, token = index.toString(16).padStart(64, "0");
+  await db.batch([
+    db.prepare(`INSERT INTO users (id, username, username_key, password_salt, password_hash, created_at)
+      VALUES (?, ?, ?, 'test-salt', 'test-hash', '2026-01-01')`).bind(id, "Racer" + index, "racer" + index),
+    db.prepare("INSERT INTO account_sessions VALUES (?, ?, ?)")
+      .bind(createHash("sha256").update(token).digest("hex"), id, Date.now() + 3600000),
+  ]);
+  return token;
+}
+
+test("times require a signed-in account, a published race, and bounded integer milliseconds", async t => {
+  const { mf, db } = await runtime(t);
+  const { id } = await (await upload(mf, raceCode())).json();
+  assert.equal((await timeRequest(mf, id, 1000, "")).status, 401);
+  assert.equal((await timeRequest(mf, id, 1000, "f".repeat(64))).status, 401);
+  for (const time of [0, -1, 1.5, "1000", null, 86400001, Number.MAX_SAFE_INTEGER]) {
+    assert.equal((await timeRequest(mf, id, time)).status, 400, String(time));
+  }
+  assert.equal((await timeRequest(mf, "0".repeat(64), 1000)).status, 404);
+  const nonrace = await (await upload(mf)).json();
+  assert.equal((await timeRequest(mf, nonrace.id, 1000)).status, 400);
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times").first("count"), 0);
+  const token = await racer(db, 42);
+  await db.prepare("UPDATE account_sessions SET expires_at = 0 WHERE user_id = 'racer-42'").run();
+  assert.equal((await timeRequest(mf, id, 1000, token)).status, 401);
+  assert.equal((await timeRequest(mf, id, 1000)).status, 200);
+  await mf.dispatchFetch("https://rooms.example/auth/logout", { method: "POST", headers: { Authorization: "Bearer " + mf.testToken } });
+  assert.equal((await timeRequest(mf, id, 900)).status, 401);
+});
+
+test("top 10 is ordered per level, shows usernames and retains personal bests outside the top 10", async t => {
+  const { mf, db } = await runtime(t);
+  const { id } = await (await upload(mf, raceCode())).json();
+  const empty = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}/times`)).json();
+  assert.deepEqual(empty, { leaderboard: [], top_time_ms: null, personal_time_ms: null });
+  const tokens = [];
+  for (let index = 1; index <= 12; index++) {
+    tokens.push(await racer(db, index));
+    const response = await timeRequest(mf, id, index * 1000, tokens.at(-1), { user_id: "racer-1", username: "Forged" });
+    assert.equal(response.status, 200, await response.clone().text());
+  }
+  const publicResult = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}/times`)).json();
+  assert.equal(publicResult.leaderboard.length, 10);
+  assert.deepEqual(publicResult.leaderboard.map(row => row.time_ms), Array.from({ length: 10 }, (_, index) => (index + 1) * 1000));
+  assert.deepEqual(publicResult.leaderboard.map(row => row.rank), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(publicResult.leaderboard[0].username, "Racer1");
+  assert.equal(publicResult.personal_time_ms, null);
+  const headers = { Authorization: "Bearer " + tokens[11] };
+  const personal = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}/times`, { headers })).json();
+  assert.equal(personal.personal_time_ms, 12000);
+  const list = await (await mf.dispatchFetch("https://rooms.example/levels", { headers })).json();
+  assert.equal(list.levels[0].top_time_ms, 1000);
+  assert.equal(list.levels[0].personal_time_ms, 12000);
+  const anonymous = await (await mf.dispatchFetch("https://rooms.example/levels")).json();
+  assert.equal(anonymous.levels[0].personal_time_ms, null);
+  const second = await (await upload(mf, raceCode(11))).json();
+  const independent = await (await mf.dispatchFetch(`https://rooms.example/levels/${second.id}/times`, { headers })).json();
+  assert.equal(independent.personal_time_ms, null);
+  assert.equal(independent.leaderboard.length, 0);
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times WHERE level_id = ?").bind(id).first("count"), 12);
+  await db.prepare("DELETE FROM levels WHERE id = ?").bind(id).run();
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times").first("count"), 0);
+});
+
+test("slower and equal retries preserve a best, concurrent finishes keep the fastest, ties are stable", async t => {
+  const { mf, db } = await runtime(t);
+  const { id } = await (await upload(mf, raceCode())).json();
+  const first = await (await timeRequest(mf, id, 12000)).json();
+  assert.equal(first.improved, true);
+  const before = await db.prepare("SELECT achieved_at FROM level_times WHERE level_id = ?").bind(id).first("achieved_at");
+  for (const time of [14000, 12000]) {
+    const result = await (await timeRequest(mf, id, time)).json();
+    assert.equal(result.improved, false);
+    assert.equal(result.personal_time_ms, 12000);
+  }
+  assert.equal(await db.prepare("SELECT achieved_at FROM level_times WHERE level_id = ?").bind(id).first("achieved_at"), before);
+  const responses = await Promise.all([11000, 7000, 9000, 5000, 8000].map(time => timeRequest(mf, id, time)));
+  assert.ok(responses.every(response => response.status === 200));
+  assert.equal(await db.prepare("SELECT time_ms FROM level_times WHERE level_id = ?").bind(id).first("time_ms"), 5000);
+  for (const index of [22, 21]) await timeRequest(mf, id, 5000, await racer(db, index));
+  // Force the timestamp tie to verify the final deterministic user-ID ordering.
+  await db.prepare("UPDATE level_times SET achieved_at = '2026-01-01'").run();
+  const a = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}/times`)).json();
+  const b = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}/times`)).json();
+  assert.deepEqual(a, b);
+  assert.deepEqual(a.leaderboard.map(row => row.user_id), a.leaderboard.map(row => row.user_id).sort());
+});
+
+test("time routes enforce browser origins, preflight, methods, body size, and secure transport", async t => {
+  const { mf } = await runtime(t);
+  const { id } = await (await upload(mf, raceCode())).json();
+  const url = `https://rooms.example/levels/${id}/times`;
+  const preflight = await mf.dispatchFetch(url, { method: "OPTIONS", headers: { Origin: ORIGIN } });
+  assert.equal(preflight.status, 204);
+  assert.match(preflight.headers.get("Access-Control-Allow-Methods"), /POST/);
+  assert.match(preflight.headers.get("Access-Control-Allow-Headers"), /Authorization/);
+  assert.equal((await mf.dispatchFetch(url, { headers: { Origin: "https://untrusted.example" } })).status, 403);
+  assert.equal((await mf.dispatchFetch(url, { method: "DELETE" })).status, 405);
+  const headers = { Authorization: "Bearer " + mf.testToken, "Content-Type": "application/json" };
+  assert.equal((await mf.dispatchFetch(url, { method: "POST", headers, body: "{" })).status, 400);
+  assert.equal((await mf.dispatchFetch(url, { method: "POST", headers, body: " ".repeat(1100) })).status, 413);
+  assert.equal((await mf.dispatchFetch(url.replace("https:", "http:"), { method: "POST", headers, body: '{"time_ms":1000}' })).status, 400);
+});
 
 async function runtime(t, uploadLimit = 1000) {
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{

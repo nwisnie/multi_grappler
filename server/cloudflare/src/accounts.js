@@ -26,7 +26,7 @@ function bearer(request) {
 export async function requireUser(request, env) {
   requireSecureTransport(request);
   const token = bearer(request);
-  if (!token) throw new RequestError("Sign in or create an account to upload levels.", 401);
+  if (!token) throw new RequestError("Sign in or create an account to save times or upload levels.", 401);
   const user = await env.LEVELS_DB.prepare(`SELECT users.id, users.username FROM account_sessions
     JOIN users ON users.id = account_sessions.user_id WHERE token_hash = ? AND expires_at > ?`)
     .bind(await tokenHash(token), Date.now()).first();

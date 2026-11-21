@@ -4,6 +4,7 @@ extends Control
 const FONT := preload("res://assets/fonts/KosugiMaru-Regular.ttf")
 const Arrow := preload("res://scripts/ui/hand_drawn_arrow.gd")
 const ARROW_COLOR := Color("d89b26")
+const LevelTimes := preload("res://scripts/levels/level_times.gd")
 
 var race: Node2D
 var status: Label
@@ -26,18 +27,26 @@ func _ready() -> void:
 	status.offset_right = -24.0
 	status.offset_top = 20.0
 	status.offset_bottom = 130.0
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 func _process(delta: float) -> void:
 	if not is_instance_valid(race) or not is_instance_valid(race.player):
 		hide()
 		return
 	ripple_time = fposmod(ripple_time + delta, TAU)
-	var time := "%02d:%05.2f" % [int(race.elapsed / 60.0), fmod(race.elapsed, 60.0)]
+	var time := LevelTimes.format_time(roundi(race.elapsed * 1000.0))
 	if race.finished:
 		status.text = "Race finished!\n" + time
 	else:
 		var destination := "Finish · #%d" % race.next_number if race.next_number == race.document.finish_checkpoint else "Next hoop · #%d" % race.next_number
 		status.text = "Lap %d / %d\n%s\n%s" % [race.lap, race.document.race_laps, destination, time]
+	if is_instance_valid(race.time_records) and not race.leaderboard_id.is_empty():
+		var summary: Dictionary = race.time_records.summary(race.leaderboard_id)
+		status.text += "\nTop: %s\nYour best: %s" % [LevelTimes.format_time(summary.get("top_time_ms")), LevelTimes.format_time(summary.get("personal_time_ms"))]
+		if not race.time_status.is_empty():
+			status.text += "\n" + race.time_status
+		elif race.time_records.current_user_id().is_empty():
+			status.text += "\nSign in to save your time."
 	queue_redraw()
 
 func _draw() -> void:

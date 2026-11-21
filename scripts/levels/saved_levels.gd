@@ -180,11 +180,7 @@ func _entry(code: String, metadata: Dictionary) -> Dictionary:
 	if source_id.is_empty():
 		# Published IDs hash the portable payload, including for multiplayer saves
 		# that arrive without library metadata or use different compression.
-		var payload := Marshalls.base64_to_raw(code.substr(LevelCodec.PREFIX.length())).decompress_dynamic(LevelCodec.MAX_PAYLOAD, FileAccess.COMPRESSION_DEFLATE)
-		var hash := HashingContext.new()
-		hash.start(HashingContext.HASH_SHA256)
-		hash.update(payload)
-		source_id = hash.finish().hex_encode()
+		source_id = LevelCodec.publication_id_from_code(code)
 	return {
 		"level_code": code,
 		"title": title if not title.is_empty() else "Saved level " + code.sha256_text().left(8),

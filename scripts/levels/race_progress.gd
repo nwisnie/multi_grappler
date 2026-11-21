@@ -19,6 +19,11 @@ var elapsed := 0.0
 var finished := false
 var previous_position := Vector2.ZERO
 var hud: Control
+var time_records: Node
+var leaderboard_id := ""
+var time_status := ""
+var run_user_id := ""
+var _attempt := 0
 
 func _ready() -> void:
 	for index in range(document.checkpoints.size() + 1):
@@ -43,6 +48,9 @@ func _ready() -> void:
 	reset()
 
 func reset() -> void:
+	_attempt += 1
+	time_status = ""
+	run_user_id = time_records.current_user_id() if is_instance_valid(time_records) else ""
 	next_number = 2
 	lap = 1
 	elapsed = 0.0
@@ -133,6 +141,7 @@ func _reach_checkpoint() -> void:
 		lap_completed.emit(lap)
 		if lap >= document.race_laps:
 			finished = true
+			_save_time()
 			race_finished.emit(elapsed)
 		else:
 			lap += 1
@@ -142,6 +151,20 @@ func _reach_checkpoint() -> void:
 	else:
 		next_number += 1
 	_update_hoops()
+
+func _save_time() -> void:
+	if not is_instance_valid(time_records) or leaderboard_id.is_empty():
+		return
+	time_status = "Saving time..."
+	time_records.submit_time(leaderboard_id, elapsed, run_user_id, _time_saved.bind(_attempt))
+
+func _time_saved(payload: Dictionary, error: String, attempt: int) -> void:
+	if attempt != _attempt:
+		return
+	if not error.is_empty():
+		time_status = "Time not saved: " + error
+	else:
+		time_status = "New personal best saved!" if payload.get("improved", false) else "Your faster personal best is saved."
 
 func _update_hoops() -> void:
 	for index in range(hoops.size()):
