@@ -53,6 +53,13 @@ var leaderboard_text: Label
 var leaderboard_level_id := ""
 var time_labels: Dictionary = {}
 var leaderboard_buttons: Dictionary = {}
+var delete_buttons: Dictionary = {}
+var delete_client: LibraryClient
+var delete_dialog: ConfirmationDialog
+var pending_delete_id := ""
+var pending_delete_owner := ""
+var deleting_level_id := ""
+var deleting_service := ""
 
 func _ready() -> void:
 	theme = MenuTheme.get_theme()
@@ -120,6 +127,79 @@ func _ready() -> void:
 		add_child(time_records)
 	time_records.changed.connect(_times_changed)
 	_build_leaderboard()
+	_build_delete_dialog()
+
+func _build_delete_dialog() -> void:
+	delete_client = LibraryClient.new()
+	add_child(delete_client)
+	delete_client.completed.connect(_deleted)
+	delete_dialog = ConfirmationDialog.new()
+	delete_dialog.title = "Delete published level?"
+	delete_dialog.exclusive = true
+	delete_dialog.dialog_autowrap = true
+	DialogStyle.apply(delete_dialog, true)
+	delete_dialog.get_ok_button().text = "Delete level"
+	delete_dialog.confirmed.connect(_confirm_delete)
+	delete_dialog.canceled.connect(_clear_pending_delete)
+	add_child(delete_dialog)
+
+func _clear_pending_delete() -> void:
+	pending_delete_id = ""
+	pending_delete_owner = ""
+	delete_dialog.hide()
+
+func _request_delete(id: String) -> void:
+	if request_busy or not deleting_level_id.is_empty():
+		return
+	var entry: Dictionary = entries.get(id, {})
+	var owner := _signed_in_user_id()
+	if current_view != View.MY_LEVELS or owner.is_empty() or entry.get("author_id", "") != owner:
+		return
+	pending_delete_id = str(entry.get("id", ""))
+	if pending_delete_id.is_empty():
+		return
+	pending_delete_owner = owner
+	delete_dialog.dialog_text = "Permanently delete \"%s\" from the level library?\n\nAll players' times and records for this level will also be deleted.\nThis cannot be undone. Downloaded copies remain playable on devices." % str(entry.get("title", "Level")).left(64)
+	delete_dialog.popup_centered(Vector2i(620, 0))
+	delete_dialog.get_cancel_button().grab_focus.call_deferred()
+
+func _confirm_delete() -> void:
+	var id := pending_delete_id
+	var owner := pending_delete_owner
+	_clear_pending_delete()
+	if request_busy or not deleting_level_id.is_empty() or id.is_empty() or owner != _signed_in_user_id() or owner.is_empty():
+		return
+	leaderboard_dialog.hide()
+	deleting_level_id = id
+	deleting_service = LibraryClient.base_url()
+	status.text = "Deleting level and its times..."
+	_busy(false)
+	# Keep this request alive through navigation: canceling HTTP cannot undo a delete.
+	delete_client.delete_level(id)
+
+func _deleted(code: int, _payload: Dictionary, error: String) -> void:
+	var id := deleting_level_id
+	deleting_level_id = ""
+	_busy(request_busy)
+	if id.is_empty() or deleting_service != LibraryClient.base_url():
+		return
+	if not error.is_empty() and code != 404:
+		if visible:
+			status.text = error
+		return
+	# A missing publication is already deleted. Discard stale list and time reads.
+	client.cancel()
+	loading_level = false
+	saving_level = false
+	_busy(false)
+	if leaderboard_level_id == id:
+		leaderboard_dialog.hide()
+	for index in range(remote_levels.size() - 1, -1, -1):
+		if remote_levels[index].get("id", "") == id:
+			remote_levels.remove_at(index)
+	time_records.forget_level(id)
+	_render_levels()
+	status.text = "Level deleted. All of its times and records were removed."
 
 func _build_leaderboard() -> void:
 	leaderboard_client = LibraryClient.new()
@@ -228,6 +308,7 @@ func open(for_selection: bool = false, view: int = View.COMMUNITY) -> void:
 	back_button.grab_focus.call_deferred()
 
 func close() -> void:
+	_clear_pending_delete()
 	leaderboard_dialog.hide()
 	client.cancel()
 	loading_level = false
@@ -237,6 +318,7 @@ func close() -> void:
 	hide()
 
 func dismiss() -> void:
+	_clear_pending_delete()
 	leaderboard_dialog.hide()
 	client.cancel()
 	loading_level = false
@@ -246,11 +328,16 @@ func dismiss() -> void:
 
 func _busy(enabled: bool) -> void:
 	request_busy = enabled
-	refresh_button.disabled = enabled
+	var blocked := enabled or not deleting_level_id.is_empty()
+	refresh_button.disabled = blocked
 	for button in play_buttons:
-		button.disabled = enabled
+		button.disabled = blocked
 	for button in save_buttons.values():
-		button.disabled = enabled
+		button.disabled = blocked
+	for button in delete_buttons.values():
+		button.disabled = blocked
+	for button in leaderboard_buttons.values():
+		button.disabled = blocked
 
 static func view_title(view: int) -> String:
 	match view:
@@ -269,6 +356,7 @@ func _account_changed() -> void:
 	if known_user_id == user_id:
 		return
 	known_user_id = user_id
+	_clear_pending_delete()
 	leaderboard_dialog.hide()
 	if visible:
 		refresh()
@@ -282,7 +370,7 @@ func _update_view_controls() -> void:
 		View.SAVED:
 			description.text = "Select a level saved by your account for your lobby." if selecting_level else "Play levels saved by your account on this device."
 		View.MY_LEVELS:
-			description.text = "Select one of your published levels for your lobby." if selecting_level else "Play and save levels you have published."
+			description.text = "Select one of your published levels for your lobby." if selecting_level else "Play or delete levels you have published."
 		_:
 			description.text = "Select a community level for your lobby, or save it for later." if selecting_level else "Play a community level, or save it for later. Upload your own from the level editor."
 	sign_in_button.visible = current_view in [View.SAVED, View.MY_LEVELS] and _signed_in_user_id().is_empty()
@@ -306,6 +394,7 @@ func _import_legacy_levels() -> void:
 		status.text = error
 
 func refresh() -> void:
+	_clear_pending_delete()
 	client.cancel()
 	loading_level = false
 	saving_level = false
@@ -326,7 +415,7 @@ func refresh() -> void:
 	client.fetch_levels()
 
 func _play(id: String) -> void:
-	if request_busy:
+	if request_busy or not deleting_level_id.is_empty():
 		return
 	var entry: Dictionary = entries.get(id, {})
 	if entry.get("level_code") is String:
@@ -343,10 +432,13 @@ func _save(id: String) -> void:
 		status.text = "Sign in to save this level to your account."
 		sign_in_requested.emit()
 		return
+	if saved_levels.owns_level(entries.get(id, {})):
+		status.text = "Your published levels are already available in My Levels."
+		return
 	_download(id, true)
 
 func _download(id: String, save_only: bool) -> void:
-	if request_busy:
+	if request_busy or not deleting_level_id.is_empty():
 		return
 	loading_level = true
 	saving_level = save_only
@@ -430,11 +522,10 @@ func _visible_entries() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	if current_view == View.MY_LEVELS and user_id.is_empty():
 		return result
-	var seen := {}
 	for remote in remote_levels:
 		var id: String = remote["id"]
 		var saved := saved_levels.find_source(id)
-		if current_view == View.COMMUNITY and not saved.is_empty():
+		if current_view == View.COMMUNITY and (not saved.is_empty() or saved_levels.owns_level(remote)):
 			continue
 		if current_view == View.MY_LEVELS and remote.get("author_id", "") != user_id:
 			continue
@@ -442,11 +533,7 @@ func _visible_entries() -> Array[Dictionary]:
 		if not saved.is_empty():
 			entry["level_code"] = saved["level_code"]
 		result.append(entry)
-		seen[id] = true
-	if current_view == View.MY_LEVELS:
-		for saved in saved_levels.list_levels():
-			if saved.get("author_id", "") == user_id and not seen.has(saved["source_id"]):
-				result.append(saved)
+	# My Levels lists publications. Offline snapshots remain in Saved Levels after deletion.
 	return result
 
 func _render_levels() -> void:
@@ -454,6 +541,7 @@ func _render_levels() -> void:
 	save_buttons.clear()
 	time_labels.clear()
 	leaderboard_buttons.clear()
+	delete_buttons.clear()
 	entries.clear()
 	for child in rows.get_children():
 		rows.remove_child(child)
@@ -482,12 +570,17 @@ func _render_levels() -> void:
 		play_buttons.append(play)
 		var leaderboard := _button("Top Times", _show_leaderboard.bind(id))
 		leaderboard_buttons[id] = leaderboard
-		if local:
-			row.add_child(_button_pair(play, leaderboard))
-		else:
+		var actions: Array[Button] = [play]
+		if not local and not saved_levels.owns_level(entry):
 			var save := _button("Save", _save.bind(id))
 			save_buttons[id] = save
-			row.add_child(_button_group([play, save, leaderboard]))
+			actions.append(save)
+		actions.append(leaderboard)
+		if current_view == View.MY_LEVELS and not _signed_in_user_id().is_empty() and entry.get("author_id", "") == _signed_in_user_id():
+			var delete := _button("Delete", _request_delete.bind(id))
+			delete_buttons[id] = delete
+			actions.append(delete)
+		row.add_child(_button_group(actions))
 	_times_changed()
 	_busy(request_busy)
 	var count := rows.get_child_count()
@@ -506,6 +599,6 @@ func _render_levels() -> void:
 			if count > 0:
 				status.text = "%d available · %d / 100 published · newest first" % [count, remote_levels.size()]
 			elif not remote_levels.is_empty():
-				status.text = "All community levels are saved. Open Saved Levels to play or host them."
+				status.text = "No other community levels to show. Open My Levels or Saved Levels to play or host your levels."
 			else:
 				status.text = "No levels published yet. Create one in the level editor!"

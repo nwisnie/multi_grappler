@@ -18,6 +18,89 @@ function timeRequest(mf, id, time, token = mf.testToken, extra = {}) {
   });
 }
 
+function deleteRequest(mf, id, token = mf.testToken, origin = ORIGIN, scheme = "https") {
+  return mf.dispatchFetch(`${scheme}://rooms.example/levels/${id}`, { method: "DELETE",
+    headers: { Origin: origin, ...(token ? { Authorization: "Bearer " + token } : {}) },
+  });
+}
+
+test("only the original uploader's live account can delete a publication", async t => {
+  const { mf, db } = await runtime(t);
+  const { id } = await (await upload(mf, raceCode())).json();
+  await timeRequest(mf, id, 1000);
+  const otherToken = await racer(db, 42);
+  // A duplicate upload and even matching display attribution do not grant ownership.
+  await db.prepare("UPDATE users SET username = 'Creator' WHERE id = 'racer-42'").run();
+  const duplicate = await mf.dispatchFetch("https://rooms.example/levels", { method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + otherToken },
+    body: JSON.stringify({ title: "Claimed", level_code: raceCode() }),
+  });
+  assert.equal((await duplicate.json()).duplicate, true);
+  assert.equal((await deleteRequest(mf, id, "")).status, 401);
+  assert.equal((await deleteRequest(mf, id, "f".repeat(64))).status, 401);
+  assert.equal((await deleteRequest(mf, id, otherToken)).status, 403);
+  await db.prepare("UPDATE account_sessions SET expires_at = 0 WHERE user_id = 'racer-42'").run();
+  assert.equal((await deleteRequest(mf, id, otherToken)).status, 401);
+  assert.equal((await deleteRequest(mf, id, mf.testToken, "https://untrusted.example")).status, 403);
+  assert.equal((await deleteRequest(mf, id, mf.testToken, ORIGIN, "http")).status, 400);
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM levels").first("count"), 1);
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times").first("count"), 1);
+  await db.prepare("UPDATE levels SET author_id = NULL WHERE id = ?").bind(id).run();
+  assert.equal((await deleteRequest(mf, id)).status, 403, "Unclaimed legacy authors cannot be deleted by matching usernames");
+  assert.equal((await deleteRequest(mf, "0".repeat(64))).status, 404);
+});
+
+test("deleting a publication removes all its records, preserves other levels, and resets times on republication", async t => {
+  const { mf, db } = await runtime(t);
+  const { id } = await (await upload(mf, raceCode())).json();
+  const other = await (await upload(mf, raceCode(11))).json();
+  await timeRequest(mf, other.id, 500);
+  await timeRequest(mf, id, 900);
+  for (let index = 1; index <= 12; index++) {
+    assert.equal((await timeRequest(mf, id, index * 1000, await racer(db, index))).status, 200);
+  }
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times WHERE level_id = ?").bind(id).first("count"), 13);
+  const results = await Promise.all([deleteRequest(mf, id), deleteRequest(mf, id)]);
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 404]);
+  const deleted = results.find(result => result.status === 200);
+  assert.deepEqual(await deleted.json(), { id });
+  assert.equal(deleted.headers.get("Access-Control-Allow-Origin"), ORIGIN);
+  assert.equal(deleted.headers.get("Cache-Control"), "no-store");
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times WHERE level_id = ?").bind(id).first("count"), 0);
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times WHERE level_id = ?").bind(other.id).first("count"), 1);
+  assert.equal((await mf.dispatchFetch(`https://rooms.example/levels/${id}`)).status, 404);
+  assert.equal((await mf.dispatchFetch(`https://rooms.example/levels/${id}/times`)).status, 404);
+  assert.equal((await timeRequest(mf, id, 100)).status, 404);
+  const list = await (await mf.dispatchFetch("https://rooms.example/levels")).json();
+  assert.deepEqual(list.levels.map(level => level.id), [other.id]);
+  assert.equal(list.levels[0].top_time_ms, 500);
+  const republished = await upload(mf, raceCode());
+  assert.equal(republished.status, 201);
+  assert.equal((await republished.json()).id, id);
+  const times = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}/times`, {
+    headers: { Authorization: "Bearer " + mf.testToken },
+  })).json();
+  assert.deepEqual(times, { leaderboard: [], top_time_ms: null, personal_time_ms: null });
+});
+
+test("level deletion supports authenticated browser preflight only on individual publications", async t => {
+  const { mf } = await runtime(t);
+  const url = "https://rooms.example/levels/" + "a".repeat(64);
+  const response = await mf.dispatchFetch(url, { method: "OPTIONS", headers: {
+    Origin: ORIGIN, "Access-Control-Request-Method": "DELETE", "Access-Control-Request-Headers": "Authorization",
+  } });
+  assert.equal(response.status, 204);
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /DELETE/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /Authorization/);
+  for (const path of ["/levels", "/levels/" + "a".repeat(64) + "/times"]) {
+    const options = await mf.dispatchFetch("https://rooms.example" + path, { method: "OPTIONS" });
+    assert.doesNotMatch(options.headers.get("Access-Control-Allow-Methods"), /DELETE/);
+    assert.equal((await mf.dispatchFetch("https://rooms.example" + path, { method: "DELETE" })).status, 405);
+  }
+  assert.equal((await mf.dispatchFetch(url, { method: "PUT" })).status, 405);
+  assert.equal((await deleteRequest(mf, "bad-id")).status, 404);
+});
+
 async function racer(db, index) {
   const id = "racer-" + index, token = index.toString(16).padStart(64, "0");
   await db.batch([
@@ -207,6 +290,9 @@ test("concurrent uploads stop at 100, retain existing levels, allow duplicate re
     .bind("f".repeat(64), "Overflow", "Admin", new Date().toISOString(), playable()).run(), /level_library_full/);
   const list = await (await mf.dispatchFetch("https://rooms.example/levels")).json();
   assert.equal(list.levels.length, 100);
+  assert.equal((await deleteRequest(mf, list.levels[0].id)).status, 200);
+  assert.equal((await upload(mf, code(120))).status, 201, "Deleting a publication frees a library slot");
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM levels").first("count"), 100);
 });
 
 test("reject invalid data, compressed bombs, nonplayable spawns, and invalid race trailers", async t => {

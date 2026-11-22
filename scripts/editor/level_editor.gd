@@ -116,7 +116,7 @@ var upload_dialog: ConfirmationDialog
 var upload_title: LineEdit
 var upload_author: Label
 var account_dialog: AccountDialog
-var upload_message: Label
+var upload_message: RichTextLabel
 var upload_client: LibraryClient
 var upload_code := ""
 var uploading := false
@@ -736,10 +736,14 @@ func _build_upload_dialog() -> void:
 	upload_title.max_length = 64
 	column.add_child(upload_title)
 	upload_author = Label.new()
-	upload_author.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	upload_author.clip_text = true
 	column.add_child(upload_author)
-	upload_message = Label.new()
-	upload_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Reserve a bounded status area before uploading. Autowrapped Label minimum
+	# heights can expand the Window while its containers are still laying out.
+	upload_message = RichTextLabel.new()
+	upload_message.custom_minimum_size.y = 80
+	upload_message.fit_content = false
+	upload_message.scroll_active = true
 	column.add_child(upload_message)
 	upload_dialog.confirmed.connect(_submit_upload)
 	upload_dialog.canceled.connect(_cancel_upload)
@@ -767,7 +771,6 @@ func _open_upload() -> void:
 	_sync_upload_account()
 	_set_uploading(false)
 	upload_message.text = ""
-	upload_message.hide()
 	MenuSlide.popup(upload_dialog, Vector2i(480, 0))
 	_fit_upload_dialog.call_deferred()
 	upload_title.grab_focus.call_deferred()
@@ -777,6 +780,7 @@ func _fit_upload_dialog() -> void:
 	await get_tree().process_frame
 	if upload_dialog.visible:
 		upload_dialog.reset_size()
+		upload_dialog.size.x = maxi(480, upload_dialog.size.x)
 		MenuSlide.recenter(upload_dialog)
 
 func _set_uploading(value: bool) -> void:
@@ -815,7 +819,7 @@ func _upload_completed(response_code: int, payload: Dictionary, error: String) -
 	if response_code not in [200, 201] or not payload.get("id") is String:
 		upload_message.text = "The library returned an invalid upload response. Try again."
 		return
-	upload_message.text = "This level is already published. Find it in Browse Levels." if payload.get("duplicate", false) else "Level published! Find it in Browse Levels."
+	upload_message.text = "This level is already published. Find it in Browse Levels." if payload.get("duplicate", false) else "Level published! Find it in My Levels."
 	upload_dialog.get_ok_button().disabled = true
 	_set_status(upload_message.text)
 

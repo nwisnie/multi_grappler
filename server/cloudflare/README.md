@@ -11,7 +11,9 @@ The same Worker serves a public level library backed by **D1**. Main menu →
 **Level Editor** now offers **Browse Levels** or **Create New**. Browse Levels lists
 published courses newest first and lets players play them or sign in to save them.
 Saved courses move to **Saved Levels**, stored locally per account and hidden after
-sign-out. **My Levels** filters publications by the signed-in account.
+sign-out. Your own publications appear in **My Levels** instead of your Community
+list. They cannot be saved again from the browser or pause menu; **My Levels** already
+provides access to them. Ownership uses account IDs, not matching display names.
 These views are also available when choosing a level in **Host Game**. Create New opens the existing
 editor, preserving any draft from this session. In the editor, **Upload** opens
 a level name form and shows the signed-in username. Uploading requires a playable spawn
@@ -103,6 +105,12 @@ complete `/levels` URL. The HTML setting takes precedence. The Worker uses the s
   Codes are fetched when a player chooses Play, Save,
   or Select; saved copies can be played or selected locally.
 - `GET /levels/:id`: metadata and the exact portable `MG1-` code.
+- `DELETE /levels/:id`: requires the original uploader's live
+  `Authorization: Bearer <session-token>`. Returns `200` with `{ "id": "..." }`.
+  The ownership check is part of the SQL delete, and `ON DELETE CASCADE` removes all
+  players' personal bests and leaderboard records in the same operation. Other
+  accounts receive `403`; missing publications receive `404`. Deletion frees a library
+  slot. Republishing the same level starts with no times or records.
 - `POST /levels`: JSON `{ "title": "Course", "level_code": "MG1-..." }` with an
   `Authorization: Bearer <session-token>` header. Level names are limited to 64 characters.
   The server supplies `author` and `author_id` from the authenticated account; a client
@@ -115,6 +123,13 @@ The existing accounts migration already stores these IDs; no new migration is ne
 Legacy publications without an account have `author_id: null` and are not claimed by
 accounts with matching display names.
 
+**My Levels → Delete** asks for confirmation before permanently deleting the publication
+and its times. Downloaded snapshots remain playable in **Saved Levels**, but a deleted
+publication disappears from **My Levels** even when a saved snapshot exists. The game
+clears its cached times after deletion. Deploy the updated Worker and re-export the
+game to enable deletion; no new database migration is needed beyond the existing
+accounts and level-times migrations.
+
 The **100-level cap is global**, enforced by an atomic SQL insert and a database
 trigger. A full library rejects new levels and preserves everything already stored;
 it never evicts older levels. Identical portable payloads share an ID even if their
@@ -124,9 +139,8 @@ hosting. Playing a community level leaves the editor draft intact.
 
 Browsing and downloading are public. Publishing requires an account. Existing levels
 retain their original creator labels; they are not automatically assigned to new
-accounts. There is no editing of published records or in-game deletion. To free a slot,
-the owner can delete the chosen record in the D1 dashboard's `levels` table. Uploads are limited
-to approximately five per public IP per minute; reads share the existing connection
+accounts. Published records cannot be edited. Uploads are limited
+to approximately five per public IP per minute; reads and deletions share the existing connection
 limiter. Upload bodies, decompression, format, grid bounds, race data, and spawn clearance
 are validated before insertion. The Worker stores data only, never executable resources.
 
@@ -135,12 +149,16 @@ duplicate retries, and 110 concurrent uploads competing for 100 slots. Godot che
 
 ```sh
 godot --headless --path ../.. --script tests/level_library_tests.gd
+godot --headless --path ../.. --script tests/level_deletion_tests.gd
 ```
 
 With `npm run dev` running, additionally set
 `LEVEL_LIBRARY_TEST_URL=http://127.0.0.1:9080/levels` for an actual Godot → Worker → D1
 upload/list/download/play test. Use local D1 for this check: it publishes one test level.
 The check also creates a temporary test account in local D1 and signs it out.
+Set `LEVEL_DELETION_TEST_URL=http://127.0.0.1:9080/levels` when running
+`tests/level_deletion_tests.gd` to check Godot's authenticated delete request against
+local D1, including removing a race record and republishing without the old times.
 
 ## Race times and leaderboards
 

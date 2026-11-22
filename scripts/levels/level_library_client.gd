@@ -1,5 +1,5 @@
 extends Node
-## Public browsing and authenticated uploads through the Worker.
+## Public browsing and authenticated level and time changes through the Worker.
 
 signal completed(response_code: int, payload: Dictionary, error: String)
 
@@ -84,6 +84,9 @@ func submit_time(id: String, milliseconds: int) -> void:
 func upload_level(title: String, code: String) -> void:
 	_send("", HTTPClient.METHOD_POST, JSON.stringify({"title": title, "level_code": code}))
 
+func delete_level(id: String) -> void:
+	_send("/" + id.uri_encode(), HTTPClient.METHOD_DELETE)
+
 func cancel() -> void:
 	request.cancel_request()
 
@@ -95,12 +98,12 @@ func _send(path: String, method: int = HTTPClient.METHOD_GET, body: String = "")
 		return
 	var headers := PackedStringArray(["Content-Type: application/json"]) if method == HTTPClient.METHOD_POST else PackedStringArray()
 	var account := get_node_or_null("/root/AccountSession")
-	if method == HTTPClient.METHOD_POST:
+	if method in [HTTPClient.METHOD_POST, HTTPClient.METHOD_DELETE]:
 		if account == null or not account.is_signed_in():
-			completed.emit(401, {}, "Sign in or create an account to save times or upload levels.")
+			completed.emit(401, {}, "Sign in or create an account to save times, upload levels, or delete your uploads.")
 			return
 		if not account.secure_endpoint(url):
-			completed.emit(0, {}, "Saving times and uploading levels require HTTPS, or localhost for testing.")
+			completed.emit(0, {}, "Saving times, uploading levels, and deleting uploads require HTTPS, or localhost for testing.")
 			return
 	if account != null and account.is_signed_in() and account.secure_endpoint(url):
 		headers.append(account.authorization_header())

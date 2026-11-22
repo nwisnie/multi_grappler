@@ -21,6 +21,7 @@ func key(shell: Node, code: Key) -> void:
 	shell._unhandled_input(event)
 
 func _run() -> void:
+	root.size = Vector2i(1280, 720)
 	preload("res://scripts/ui/menu_slide.gd").duration_scale = 0.0
 	account_session = root.get_node("AccountSession")
 	ProjectSettings.set_setting("network/level_library_url", "invalid-url")
@@ -66,6 +67,7 @@ func _run() -> void:
 	await process_frame
 	check(editor.upload_dialog.visible and editor.upload_code == draft, "Upload captures a playable level snapshot")
 	check(editor.upload_dialog.size.y < root.get_visible_rect().size.y, "Upload dialog and action buttons fit in viewport")
+	var publish_size := editor.upload_dialog.size
 	editor._submit_upload()
 	check(editor.upload_message.text.contains("name"), "Upload requires a level name")
 	editor.upload_title.text = "Test course"
@@ -75,6 +77,18 @@ func _run() -> void:
 	check(editor.upload_message.text.contains("full") and LevelCodec.encode_level(editor.document) == draft, "Library full preserves draft and displays error")
 	editor._upload_completed(201, {"id": id}, "")
 	check(editor.upload_message.text.contains("published") and editor.upload_dialog.get_ok_button().disabled, "Successful upload confirms publication")
+	for frame in range(8):
+		await process_frame
+		check(editor.upload_dialog.size == publish_size, "Publishing keeps the dialog size stable on layout frame %d" % frame)
+	check(root.get_visible_rect().encloses(Rect2(Vector2(editor.upload_dialog.position), Vector2(editor.upload_dialog.size))), "Published confirmation remains fully inside the viewport")
+	editor._upload_completed(200, {"id": id, "duplicate": true}, "")
+	await process_frame
+	await process_frame
+	check(editor.upload_dialog.size == publish_size and editor.upload_message.text.contains("already published"), "Duplicate publication keeps the same bounded status area")
+	editor._upload_completed(503, {}, "Could not publish this level. ".repeat(20))
+	await process_frame
+	await process_frame
+	check(editor.upload_dialog.size == publish_size, "Long upload errors scroll within the existing dialog")
 	editor.upload_dialog.hide()
 	shell.show_level_browser()
 	check(not editor.visible and not editor.upload_dialog.visible, "Browsing suspends editor and its dialogs")
@@ -128,7 +142,7 @@ func _http_checks(shell: Node, endpoint: String, code: String) -> void:
 		await process_frame
 	check(editor.upload_message.text.contains("published"), "Godot uploads its real MG1 code through HTTP to D1: " + editor.upload_message.text)
 	editor.upload_dialog.hide()
-	shell.show_level_browser()
+	shell.show_level_browser(false, shell.level_browser.View.MY_LEVELS)
 	deadline = Time.get_ticks_msec() + 18000
 	while shell.level_browser.refresh_button.disabled and Time.get_ticks_msec() < deadline:
 		await process_frame

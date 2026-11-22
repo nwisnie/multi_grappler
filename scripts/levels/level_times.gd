@@ -10,6 +10,7 @@ var summary_error := ""
 var account: Node
 var summary_client: LibraryClient
 var _scope := ""
+var _level_versions: Dictionary = {}
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -31,6 +32,7 @@ func _account_changed() -> void:
 	_scope = scope
 	summary_client.cancel()
 	summaries.clear()
+	_level_versions.clear()
 	summary_error = ""
 	changed.emit()
 	if had_scope:
@@ -44,6 +46,13 @@ static func format_time(milliseconds: Variant) -> String:
 
 func summary(id: String) -> Dictionary:
 	return summaries.get(id, {})
+
+func forget_level(id: String) -> void:
+	# Pending reads and finishes must not restore a deleted publication's records.
+	summary_client.cancel()
+	_level_versions[id] = int(_level_versions.get(id, 0)) + 1
+	summaries.erase(id)
+	changed.emit()
 
 func cache_time(id: String, payload: Dictionary) -> void:
 	summaries[id] = {"top_time_ms": payload.get("top_time_ms"), "personal_time_ms": payload.get("personal_time_ms")}
@@ -82,9 +91,10 @@ func submit_time(id: String, seconds: float, run_user_id: String, callback: Call
 	var client := LibraryClient.new()
 	add_child(client)
 	var scope := _scope
+	var version := int(_level_versions.get(id, 0))
 	client.completed.connect(func(_code: int, payload: Dictionary, error: String) -> void:
 		if scope == _scope:
-			if error.is_empty():
+			if error.is_empty() and version == int(_level_versions.get(id, 0)):
 				cache_time(id, payload)
 			if callback.is_valid():
 				callback.call(payload, error)

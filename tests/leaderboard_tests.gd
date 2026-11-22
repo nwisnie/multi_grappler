@@ -82,7 +82,7 @@ func _run() -> void:
 	summaries.completed.connect(shell.time_records._received_summaries)
 	var document := course()
 	var id := LevelCodec.publication_id(document)
-	var entry := {"id": id, "title": "Timed course", "author": "Owner", "author_id": "owner", "top_time_ms": 10000, "personal_time_ms": null}
+	var entry := {"id": id, "title": "Timed course", "author": "Creator", "author_id": "course-creator", "top_time_ms": 10000, "personal_time_ms": null}
 	shell.show_level_browser()
 	library.completed.emit(200, {"levels": [entry]}, "")
 	check(browser.time_labels[id].text.contains("00:10.000") and browser.time_labels[id].text.contains("Sign in"), "Guests see the record and a sign-in hint")

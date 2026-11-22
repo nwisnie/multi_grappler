@@ -758,7 +758,7 @@ func pause_game() -> void:
 
 func _sync_pause_save_button() -> void:
 	pause_save_message.hide()
-	pause_save_button.visible = is_instance_valid(world) and world is CustomLevel
+	pause_save_button.visible = is_instance_valid(world) and world is CustomLevel and not saved_levels.owns_level(active_level_metadata)
 	if pause_save_button.visible:
 		var saved := not saved_levels.find_level(world.document).is_empty()
 		pause_save_button.text = "Level Saved" if saved else "Save Level"

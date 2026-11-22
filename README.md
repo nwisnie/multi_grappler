@@ -10,6 +10,12 @@ account prompt, then returns to the upload form. The creator name comes from the
 signed-in account. Browsing, playing, editing, and multiplayer remain available without
 an account.
 
+Signed-in creators can delete their uploads from **My Levels → Delete**. Confirmation
+permanently removes the published level and all players' times and records. Previously
+downloaded copies remain playable in Saved Levels.
+Your uploads appear in **My Levels** instead of your Community list. They do not offer
+Save actions; other players can still browse and save them.
+
 For D1 setup, deployment, and local level publishing, see
 [the Cloudflare backend instructions](server/cloudflare/README.md#set-up-d1-for-level-publishing).
 Use the Cloudflare Worker locally for these features.

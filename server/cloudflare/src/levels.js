@@ -153,17 +153,28 @@ export async function levels(request, env) {
   const times = Boolean(match?.[2]);
   if (!collection && !match) return json({ error: "Level not found." }, 404);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: {
-    ...headers, "Access-Control-Allow-Methods": collection || times ? "GET, POST, OPTIONS" : "GET, OPTIONS",
+    ...headers, "Access-Control-Allow-Methods": collection || times ? "GET, POST, OPTIONS" : "GET, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Max-Age": "86400",
   } });
-  if (request.method !== "GET" && !((collection || times) && request.method === "POST")) return json({ error: "Method not allowed." }, 405);
+  if (request.method !== "GET" && !((collection || times) && request.method === "POST") &&
+      !(!collection && !times && request.method === "DELETE")) return json({ error: "Method not allowed." }, 405);
   const key = request.headers.get("CF-Connecting-IP") || "local";
   const limiter = request.method === "POST" && collection ? env.UPLOAD_LIMITER : env.CONNECT_LIMITER;
   if (!(await limiter.limit({ key })).success) return json({ error: "Too many requests. Try again in a minute." }, 429);
   if (!env.LEVELS_DB) return json({ error: "The level library is not configured yet." }, 503);
   try {
     // Optional authentication personalizes reads without accepting a client user ID.
-    const user = request.method === "POST" || request.headers.has("Authorization") ? await requireUser(request, env) : null;
+    const user = request.method !== "GET" || request.headers.has("Authorization") ? await requireUser(request, env) : null;
+    if (request.method === "DELETE") {
+      // Authorize the write itself. The level_times foreign key atomically removes
+      // every personal best (including records outside the public top 10).
+      const deleted = await env.LEVELS_DB.prepare("DELETE FROM levels WHERE id = ? AND author_id = ? RETURNING id")
+        .bind(match[1], user.id).first();
+      if (deleted) return json({ id: deleted.id });
+      const existing = await env.LEVELS_DB.prepare("SELECT id FROM levels WHERE id = ?").bind(match[1]).first();
+      return existing ? json({ error: "Only the account that uploaded this level can delete it." }, 403)
+        : json({ error: "This published level is no longer available." }, 404);
+    }
     if (times) {
       const level = await env.LEVELS_DB.prepare("SELECT level_code FROM levels WHERE id = ?").bind(match[1]).first();
       if (!level) return json({ error: "This published level is no longer available." }, 404);

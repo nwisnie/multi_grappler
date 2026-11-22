@@ -110,6 +110,9 @@ func find_source(id: String) -> Dictionary:
 			return entry.duplicate(true)
 	return {}
 
+func owns_level(metadata: Dictionary) -> bool:
+	return is_instance_valid(_account) and _account.is_signed_in() and metadata.get("author_id", "") == _account.user_id
+
 func save_level(document: LevelDocument, metadata: Dictionary = {}) -> String:
 	_account_changed()
 	if _scope.is_empty():
@@ -126,6 +129,8 @@ func save_level(document: LevelDocument, metadata: Dictionary = {}) -> String:
 	for key in ["title", "author", "author_id", "source_id", "id"]:
 		if metadata.get(key) is String and not metadata[key].strip_edges().is_empty():
 			details[key] = metadata[key]
+	if owns_level(details):
+		return "Your published levels are already available in My Levels."
 	var entry := _entry(code, details)
 	var updated: Array[Dictionary] = [entry]
 	for saved in _levels:
