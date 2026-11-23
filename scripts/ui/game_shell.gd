@@ -80,9 +80,11 @@ var account_sign_in: Button
 var account_sign_out: Button
 var camera_zoom_slider: HSlider
 var wall_cursor_toggle: CheckBox
+var grapple_direction_toggle: CheckBox
 var fullscreen_toggle: CheckBox
 var camera_zoom: float = preload("res://scripts/player/ball.gd").CAMERA_BASE_ZOOM.x
 var show_wall_cursor := false
+var show_grapple_direction := true
 var resume_waiting_for_release := false
 
 func _ready() -> void:
@@ -265,7 +267,7 @@ func _process(delta: float) -> void:
 		loading_elapsed += delta
 		loading_title.text = "Loading" + ".".repeat(1 + int(loading_elapsed * 2.0) % 3)
 	if resume_waiting_for_release and not get_tree().paused:
-		if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not Input.is_key_pressed(KEY_SPACE):
+		if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			resume_waiting_for_release = false
 			var player := _player()
 			if player != null:
@@ -648,6 +650,15 @@ func _build_settings_menu() -> void:
 	)
 	DialogStyle.ButtonPulse.install(wall_cursor_toggle, false, true)
 	column.add_child(wall_cursor_toggle)
+	grapple_direction_toggle = CheckBox.new()
+	grapple_direction_toggle.text = "Show grapple direction indicator"
+	grapple_direction_toggle.button_pressed = show_grapple_direction
+	grapple_direction_toggle.toggled.connect(func(enabled: bool) -> void:
+		show_grapple_direction = enabled
+		_apply_player_settings(_player())
+	)
+	DialogStyle.ButtonPulse.install(grapple_direction_toggle, false, true)
+	column.add_child(grapple_direction_toggle)
 	fullscreen_toggle = CheckBox.new()
 	fullscreen_toggle.text = "Fullscreen"
 	fullscreen_toggle.toggled.connect(_set_fullscreen)
@@ -734,6 +745,7 @@ func _apply_player_settings(player: RigidBody2D) -> void:
 	if is_instance_valid(player):
 		player.set_camera_zoom(camera_zoom, settings_dialog.visible)
 		player.show_grapple_cursor = show_wall_cursor
+		player.show_grapple_direction = show_grapple_direction
 		if screen == Screen.MULTIPLAYER and (pause_dialog.visible or settings_dialog.visible):
 			player.spawn_controls_pending = false
 			player.set_controls_locked(true)
@@ -790,7 +802,7 @@ func _finish_resume() -> void:
 	MenuSlide.hide_now(pause_dialog)
 	dimmer.hide()
 	get_tree().paused = false
-	# A menu click or held Space must not charge an attack or fire a grapple.
+	# Wait for both mouse buttons so menu clicks cannot launch or fire a grapple.
 	resume_waiting_for_release = true
 
 func show_settings() -> void:

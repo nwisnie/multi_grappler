@@ -291,17 +291,17 @@ credential generation. `npx wrangler tail` shows runtime errors without logging 
 or signaling payloads in our application code.
 
 Then re-export the **Web** preset in Godot and upload the updated game to GitHub Pages.
-The game automatically uses `wss://rooms.wizkinews.com` on `wizkinews.com` and
-`www.wizkinews.com`. Localhost uses the local signaling service. On other domains, set
-this before loading the Godot engine in the exported HTML (or the iframe's HTML):
+The Godot **Web** preset sets `wss://rooms.wizkinews.com` for hosted HTTPS pages in
+its **Head Include**. Loopback URLs use the local signaling service. For another
+signaling server, set this before loading the Godot engine:
 
 ```html
-<script>window.MULTI_GRAPPLER_SIGNALING_URL = "wss://rooms.wizkinews.com";</script>
+<script>window.MULTI_GRAPPLER_SIGNALING_URL = "wss://rooms.example.com";</script>
 ```
 
-If the game lives in an iframe, allow the **iframe's origin** in `ALLOWED_ORIGINS`, not
-just the parent page's origin. The checked-in origins cover your main website and local
-port 8000. Add another exact origin to `wrangler.jsonc` and redeploy when needed.
+If the game lives in an iframe, use the **iframe's origin** for `ALLOWED_ORIGINS` in
+`wrangler.jsonc`. The list covers the main website and local ports 8000 and 5173.
+Add any other exact origin (scheme, host and port) and redeploy the Worker.
 
 ## Test without deploying
 

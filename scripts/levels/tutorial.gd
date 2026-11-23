@@ -6,6 +6,13 @@ signal restart_requested
 
 const InstructionArea := preload("res://scripts/levels/tutorial_instruction_area.gd")
 const PASS_RADIUS := LevelDocument.CHECKPOINT_RADIUS + LevelDocument.PLAYER_RADIUS
+## Keep the built-in control prompts independent of serialized scene text.
+const CONTROL_PROMPTS := {
+	&"Movement": "Use A/D or the left/right arrow keys to move.",
+	&"Launch": "Right-click a wall or floor to launch away. Closer hits boost more.",
+	&"WallGrapple": "Aim up a wall and hold left-click to grapple.",
+	&"OrbGrapple": "Aim at an orb and hold left-click to grapple toward it.",
+}
 
 ## Vertical wave height in pixels.
 @export_range(0.0, 20.0, 0.5) var wave_amplitude := 6.0
@@ -76,7 +83,9 @@ func _update_instruction() -> void:
 	for area in active_areas:
 		if selected == null or area.instruction_priority > selected.instruction_priority:
 			selected = area
-	var text := selected.instruction if selected != null else ""
+	var text := ""
+	if selected != null:
+		text = CONTROL_PROMPTS.get(selected.name, selected.instruction)
 	if current_instruction != text:
 		current_instruction = text
 		var escaped := text.replace("[", "[lb]")

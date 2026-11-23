@@ -84,6 +84,13 @@ func _run() -> void:
 	player.show_grapple_cursor = false
 	aim(player, Vector2(600, 0))
 	check(player.grapple_direction.visible and player.grapple_direction.can_grapple and not player.grapple_cursor.visible, "Acquiring a wall target clears the unavailable marker even when the wall cursor is disabled")
+	player.show_grapple_cursor = true
+	player.show_grapple_direction = false
+	check(not player.grapple_direction.visible, "Disabling the direction indicator hides it immediately")
+	aim(player, Vector2(600, 0))
+	check(not player.grapple_direction.visible and player.grapple_cursor.visible and player.grapple_target_available, "The hidden direction indicator does not change grapple aim or the wall cursor")
+	player.show_grapple_direction = true
+	check(player.grapple_direction.visible, "Enabling the direction indicator restores it for the current aim")
 	player.set_controls_locked(true)
 	aim(player, Vector2(600, 0))
 	check(not player.grapple_cursor.visible, "Locked gameplay controls hide the grapple cursor")

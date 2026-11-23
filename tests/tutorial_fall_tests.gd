@@ -35,10 +35,10 @@ func _run() -> void:
 		check(shell.world.player.position.distance_to(Vector2(-872, 138)) < 20.0, "Fall respawn returns to the starting platform")
 		check(shell.world.player.linear_velocity.length() < 500.0 and is_zero_approx(shell.world.player.angular_velocity), "Fall respawn clears falling and rolling momentum")
 		check(shell.world.player.current_health == shell.world.player.max_health and not shell.world.player.grapple_active, "Fall respawn restores health and releases the grapple")
-		check(shell.world.current_instruction == "WASD to move" and not shell.world.finished and not shell.tutorial_complete_dialog.visible, "Fall respawn restores tutorial instructions without completing the level")
+		check(shell.world.current_instruction == "Use A/D or the left/right arrow keys to move." and not shell.world.finished and not shell.tutorial_complete_dialog.visible, "Fall respawn restores tutorial instructions without completing the level")
 		check(shell.world.player.initial_camera_zoom == Vector2.ONE * 0.3 and shell.world.player.show_grapple_cursor, "Fall respawn preserves player settings")
-	var held := InputEventKey.new()
-	held.keycode = KEY_SPACE
+	var held := InputEventMouseButton.new()
+	held.button_index = MOUSE_BUTTON_LEFT
 	held.pressed = true
 	Input.parse_input_event(held)
 	Input.flush_buffered_events()
@@ -51,12 +51,12 @@ func _run() -> void:
 	old_level._physics_process(0.0)
 	check(requests[0] == 1 and not old_level.player.grapple_active, "A fall releases the grapple and requests only one restart")
 	await settle()
-	check(shell.world.player.controls_locked, "Fall respawn waits for a held grapple key to be released")
+	check(shell.world.player.controls_locked, "Fall respawn waits for the held grapple button to be released")
 	held.pressed = false
 	Input.parse_input_event(held)
 	Input.flush_buffered_events()
 	await settle()
-	check(not shell.world.player.controls_locked, "Releasing the key restores controls after a fall")
+	check(not shell.world.player.controls_locked, "Releasing the mouse button restores controls after a fall")
 	# A fall queued just before leaving must not reopen the tutorial.
 	old_level = shell.world
 	old_level.player.position.y = old_level.fall_limit_y + 1.0

@@ -32,7 +32,7 @@
     }
   ],
   "vars": {
-    "ALLOWED_ORIGINS": "https://wizkinews.com,https://www.wizkinews.com,http://localhost:8000,http://127.0.0.1:8000",
+    "ALLOWED_ORIGINS": "https://wizkinews.com,https://www.wizkinews.com,http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173",
     "TURN_TTL_SECONDS": "86400",
     "ROOM_TTL_SECONDS": "43200"
   },

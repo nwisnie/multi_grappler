@@ -11,42 +11,30 @@ const SUPPORT_MIN_UP := 0.05
 const CAMERA_FOLLOW_SPEED := 4.5
 const CAMERA_LOOK_AHEAD := 80.0
 const CAMERA_VERTICAL_OFFSET := -30.0
-const CAMERA_BASE_ZOOM := Vector2(0.5, 0.5)
+const CAMERA_BASE_ZOOM := Vector2(0.46, 0.46)
 const CAMERA_MAX_ZOOM_OUT := Vector2(0.45, 0.45)
 const CAMERA_ZOOM_SPEED := 3.5
 const GRAPPLE_MAX_DISTANCE := 2200.0
 const GrappleCursorScript := preload("res://scripts/grapple/grapple_cursor.gd")
 const GrappleDirectionScript := preload("res://scripts/grapple/grapple_direction.gd")
 const GrappleEffectScript := preload("res://scripts/grapple/grapple_effect.gd")
+const SpeedBarScript := preload("res://scripts/ui/speed_bar.gd")
 const GRAPPLE_VISUAL_SHOOT_SPEED := 10000.0
 const GRAPPLE_MIN_LENGTH := 24.0
 const GRAPPLE_PULL_FORCE := 12000.0
 const GRAPPLE_PULL_SPEED_LIMIT := 720.0
 const GRAPPLE_TETHER_BOUNCE := 0.18
 const GRAPPLE_MAX_BOUNCE_SPEED := 160.0
-const JAB_MIN_LENGTH := 120.0
-const JAB_MAX_LENGTH := 420.0
+const JAB_LENGTH := 420.0
 const JAB_WIDTH := 76.0
 const JAB_ACTIVE_TIME := 0.12
-const JAB_MAX_CHARGE_TIME := 1.4
-const JAB_MIN_COOLDOWN := 0.15
-const JAB_MAX_COOLDOWN := 0.9
-const JAB_MIN_IMPULSE := 420.0
-const JAB_MAX_IMPULSE := 1350.0
-const JAB_MIN_DAMAGE := 1
-const JAB_MAX_DAMAGE := 10
-const JAB_METER_MAX_SHAKE := 4.0
+const JAB_COOLDOWN := 0.8
+const JAB_IMPULSE := 1350.0
+const JAB_DAMAGE := 10
 const JAB_UPWARD_BIAS := 0.08
-const JAB_FULL_CHARGE_MOVE_MULTIPLIER := 0.45
-const JAB_CHARGE_BRAKE_FORCE := 18000.0
 const JAB_START_OFFSET := 48.0
-const JAB_WORLD_RECOIL_MIN_IMPULSE := 520.0
-const JAB_WORLD_RECOIL_MAX_IMPULSE := 1450.0
-const CHARGE_METER_SIZE := Vector2(168.0, 26.0)
-const CHARGE_METER_OFFSET := Vector2(-84.0, -110.0)
-const CHARGE_METER_EMPTY_COLOR := Color(0.25, 0.52, 0.78, 0.97)
-const CHARGE_METER_ACTIVE_COLOR := Color(0.25, 0.7, 0.36, 0.97)
-const CHARGE_METER_COOLDOWN_COLOR := Color(0.2, 0.44, 0.28, 0.92)
+const JAB_WORLD_LAUNCH_MIN_SPEED := 1200.0
+const JAB_WORLD_LAUNCH_MAX_SPEED := 1800.0
 const MOVE_STRETCH_MAX := 0.16
 const MOVE_STRETCH_SPEED := 1200.0
 const COLLISION_SQUASH_MAX := 0.24
@@ -71,12 +59,22 @@ const JAB_CHAIN_WIDTH := 7.0
 const HEART_TEXTURE := preload("res://assets/ui/heart.png")
 const HEART_UI_POSITION := Vector2(22.0, 20.0)
 const HEART_UI_SIZE := Vector2(100.0, 150.0)
-const HEART_BEAT_SPEED := 0.75
-const HEART_BEAT_SECOND_PULSE_DELAY := 0.2
-const HEART_BEAT_SCALE_AMOUNT := 0.12
-const HEART_BEAT_ROTATION_AMOUNT := deg_to_rad(3.0)
-const PLAYER_HEALTH_BAR_SIZE := Vector2(250.0, 26.0)
-const PLAYER_HEALTH_BAR_FILL_COLOR := Color(0.905882, 0.6, 0.623529, 0.96)
+const HEART_BEAT_IDLE_SPEED := 0.6
+const HEART_BEAT_MAX_SPEED := 2.5
+const HEART_THUMP_DURATION := 0.16
+const HEART_SECOND_THUMP_DELAY := 0.18
+const HEART_IDLE_SCALE_AMOUNT := 0.08
+const HEART_MAX_SCALE_AMOUNT := 0.27
+const HEART_IDLE_ROTATION_AMOUNT := deg_to_rad(2.0)
+const HEART_MAX_ROTATION_AMOUNT := deg_to_rad(7.0)
+const PLAYER_METERS_OFFSET := Vector2(62.0, 44.0)
+const PLAYER_METER_ROW_SPACING := 51.0
+const PLAYER_SPEED_BAR_SIZE := Vector2(250.0, 26.0)
+const PLAYER_SPEED_BAR_FILL_COLOR := Color(0.905882, 0.6, 0.623529, 0.96)
+const PLAYER_LAUNCH_BAR_SIZE := Vector2(180.0, PLAYER_SPEED_BAR_SIZE.y)
+const PLAYER_LAUNCH_BAR_FILL_COLOR := Color("9c8aac")
+const SPEED_UI_FULL_SPEED := 3200.0
+const SPEED_UI_RESPONSE := 8.0
 const DAMAGE_IMMUNITY_TIME := 0.65
 
 @onready var camera: Camera2D = $Camera2D
@@ -90,10 +88,10 @@ var jab_mace_sprite: Sprite2D
 var jab_chain_line: Line2D
 var jab_visual_tween: Tween
 var jab_visual_start_position := Vector2.ZERO
-var jab_meter: EnemyHealthBar
 var player_ui_layer: CanvasLayer
 var heart_texture_rect: TextureRect
-var player_health_bar: EnemyHealthBar
+var player_speed_bar: SpeedBarScript
+var player_launch_bar: SpeedBarScript
 var grapple_cursor: Node2D
 var grapple_direction: Node2D
 var grapple_target_available := false
@@ -114,11 +112,16 @@ var grapple_targets_orb := false
 @export var initial_camera_zoom: Vector2 = CAMERA_BASE_ZOOM
 @export var speed_zoom_out: Vector2 = CAMERA_MAX_ZOOM_OUT
 @export var show_grapple_cursor := false
+@export var show_grapple_direction := true:
+	set(enabled):
+		if show_grapple_direction != enabled:
+			show_grapple_direction = enabled
+			_update_grapple_direction()
 @export_range(1, 1000, 1) var max_health: int = 20
 @export_group("Orb Grapple")
 @export_range(24.0, 200.0, 1.0) var orb_grapple_release_distance := 88.0
-@export_range(12000.0, 40000.0, 500.0) var orb_grapple_pull_force := 18000.0
-@export_range(720.0, 1800.0, 10.0) var orb_grapple_speed_limit := 1050.0
+@export_range(12000.0, 40000.0, 500.0) var orb_grapple_pull_force := 22500.0
+@export_range(720.0, 2400.0, 10.0) var orb_grapple_speed_limit := 1440.0
 @export_range(0.0, 24.0, 0.5) var orb_grapple_steering := 12.0
 @export_group("")
 
@@ -127,14 +130,10 @@ var damage_immunity_remaining := 0.0
 var grapple_active: bool = false
 var grapple_anchor: Vector2 = Vector2.ZERO
 var grapple_length: float = 0.0
-var was_left_mouse_pressed: bool = false
+var was_launch_pressed: bool = false
 var was_grapple_pressed: bool = false
-var jab_charging: bool = false
-var jab_charge_time: float = 0.0
 var jab_cooldown_remaining: float = 0.0
-var jab_cooldown_total: float = 0.0
 var jab_active_remaining: float = 0.0
-var jab_charge_ratio: float = 0.0
 var jab_hit_bodies: Array[Node] = []
 var has_support_contact: bool = false
 var support_normal: Vector2 = Vector2.UP
@@ -148,7 +147,8 @@ var previous_contact_count: int = 0
 var camera_shake_amount: float = 0.0
 var camera_zoom_preview := false
 var idle_breath_time: float = 0.0
-var heart_beat_time: float = 0.0
+var heart_beat_phase: float = 0.0
+var heart_thump_time: float = 0.0
 
 func _scaled_force(base_force: float, input_direction: float, current_speed: float, reverse_multiplier: float) -> float:
 	if input_direction == 0.0:
@@ -180,7 +180,6 @@ func _ready() -> void:
 	grapple_effect.visible = false
 	add_child(grapple_effect)
 	_setup_jab_nodes()
-	_setup_jab_meter()
 	_setup_player_ui()
 	grapple_cursor = GrappleCursorScript.new()
 	grapple_cursor.name = "GrappleCursor"
@@ -201,6 +200,7 @@ func _exit_tree() -> void:
 func _process(delta: float) -> void:
 	_update_squash_and_stretch(delta)
 	_update_jab_visual_line()
+	_update_speed_ui(delta)
 	_update_heart_ui(delta)
 	# Resolve the current mouse ray every rendered frame, with no aim smoothing.
 	_refresh_grapple_target()
@@ -218,8 +218,6 @@ func _physics_process(delta: float) -> void:
 
 	var move_direction: float = _get_move_direction()
 	var is_grapple_pressed: bool = _is_grapple_pressed()
-	var charge_move_multiplier := _get_charge_move_multiplier()
-	var max_ground_speed := MAX_GROUND_SPEED * charge_move_multiplier
 	_update_grapple(is_grapple_pressed)
 
 	if has_support_contact:
@@ -229,10 +227,9 @@ func _physics_process(delta: float) -> void:
 			floor_tangent = -floor_tangent
 
 		var tangent_speed: float = linear_velocity.dot(floor_tangent)
-		if move_direction != 0.0 and (absf(tangent_speed) < max_ground_speed or signf(tangent_speed) != signf(move_direction)):
-			var ground_force: float = _scaled_force(MOVE_FORCE * charge_move_multiplier, move_direction, tangent_speed, GROUND_REVERSE_FORCE_MULTIPLIER)
+		if move_direction != 0.0 and (absf(tangent_speed) < MAX_GROUND_SPEED or signf(tangent_speed) != signf(move_direction)):
+			var ground_force: float = _scaled_force(MOVE_FORCE, move_direction, tangent_speed, GROUND_REVERSE_FORCE_MULTIPLIER)
 			apply_central_force(floor_tangent * move_direction * ground_force)
-		_apply_charge_brake(floor_tangent, tangent_speed, max_ground_speed)
 	else:
 		if move_direction != 0.0 and (absf(linear_velocity.x) < MAX_AIR_SPEED or signf(linear_velocity.x) != signf(move_direction)):
 			var air_force: float = _scaled_force(AIR_CONTROL_FORCE, move_direction, linear_velocity.x, AIR_REVERSE_FORCE_MULTIPLIER)
@@ -280,29 +277,12 @@ func take_damage(amount: int = 1) -> bool:
 		return false
 	current_health = maxi(current_health - amount, 0)
 	damage_immunity_remaining = DAMAGE_IMMUNITY_TIME
-	_update_player_health_bar()
 	return true
 
 func set_max_health(value: int) -> void:
 	var previous_max := max_health
 	max_health = maxi(value, 1)
 	current_health = clampi(current_health + max_health - previous_max, 0, max_health)
-	_update_player_health_bar()
-
-func _update_player_health_bar() -> void:
-	if player_health_bar != null:
-		player_health_bar.set_health_ratio(float(current_health) / float(max_health))
-
-func _get_charge_move_multiplier() -> float:
-	if not jab_charging:
-		return 1.0
-	return lerpf(1.0, JAB_FULL_CHARGE_MOVE_MULTIPLIER, clampf(jab_charge_ratio, 0.0, 1.0))
-
-func _apply_charge_brake(move_axis: Vector2, current_speed: float, max_speed: float) -> void:
-	if not jab_charging or absf(current_speed) <= max_speed:
-		return
-	var brake_ratio := clampf(jab_charge_ratio, 0.0, 1.0)
-	apply_central_force(-move_axis.normalized() * signf(current_speed) * JAB_CHARGE_BRAKE_FORCE * brake_ratio)
 
 func set_visual_z_index(value: int) -> void:
 	z_index = value
@@ -350,18 +330,13 @@ func _upright_axis_angle(angle: float) -> float:
 	return normalized_angle
 
 func _clear_control_input_state() -> void:
-	was_left_mouse_pressed = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	was_launch_pressed = _is_launch_pressed()
 	was_grapple_pressed = _is_grapple_pressed()
 	if grapple_active:
 		_release_grapple()
-	if jab_charging:
-		jab_charging = false
-		jab_charge_time = 0.0
-		jab_charge_ratio = 0.0
 	if jab_active_remaining > 0.0:
 		jab_active_remaining = 0.0
 		_end_jab_attack()
-	_update_jab_meter()
 
 func set_camera_zoom(value: float, preview: bool = false) -> void:
 	initial_camera_zoom = Vector2.ONE * value
@@ -449,7 +424,7 @@ func _setup_jab_nodes() -> void:
 	add_child(jab_area)
 
 	var rectangle_shape := RectangleShape2D.new()
-	rectangle_shape.size = Vector2(JAB_MIN_LENGTH, JAB_WIDTH)
+	rectangle_shape.size = Vector2(JAB_LENGTH, JAB_WIDTH)
 
 	jab_shape = CollisionShape2D.new()
 	jab_shape.name = "CollisionShape2D"
@@ -475,17 +450,6 @@ func _setup_jab_nodes() -> void:
 	jab_mace_sprite.visible = false
 	add_child(jab_mace_sprite)
 
-func _setup_jab_meter() -> void:
-	jab_meter = EnemyHealthBar.new()
-	jab_meter.name = "JabMeter"
-	jab_meter.top_level = true
-	jab_meter.configure(CHARGE_METER_SIZE)
-	jab_meter.shake_on_decrease = false
-	jab_meter.set_fill_color(CHARGE_METER_EMPTY_COLOR)
-	jab_meter.visible = false
-	add_child(jab_meter)
-	jab_meter.set_anchor(global_position + CHARGE_METER_OFFSET)
-
 func _setup_player_ui() -> void:
 	player_ui_layer = CanvasLayer.new()
 	player_ui_layer.name = "PlayerUILayer"
@@ -503,44 +467,67 @@ func _setup_player_ui() -> void:
 	heart_texture_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	player_ui_layer.add_child(heart_texture_rect)
 
-	player_health_bar = EnemyHealthBar.new()
-	player_health_bar.name = "PlayerHealthBar"
-	player_health_bar.configure(PLAYER_HEALTH_BAR_SIZE)
-	player_health_bar.set_fill_color(PLAYER_HEALTH_BAR_FILL_COLOR)
-	player_health_bar.outline_width = 5.0
-	player_health_bar.pointed_right_edge = true
-	player_health_bar.idle_float_amount = 0.0
-	player_ui_layer.add_child(player_health_bar)
-	player_health_bar.z_index = -1
-	player_health_bar.set_anchor(_player_health_bar_position())
-	_update_player_health_bar()
+	player_speed_bar = SpeedBarScript.new()
+	player_speed_bar.name = "PlayerSpeedBar"
+	player_speed_bar.title = "SPEED"
+	player_speed_bar.fill_color = PLAYER_SPEED_BAR_FILL_COLOR
+	player_speed_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	player_speed_bar.position = HEART_UI_POSITION + PLAYER_METERS_OFFSET
+	player_speed_bar.size = PLAYER_SPEED_BAR_SIZE
+	player_speed_bar.z_index = -1
+	player_ui_layer.add_child(player_speed_bar)
 
-func _player_health_bar_position() -> Vector2:
-	return HEART_UI_POSITION + Vector2(HEART_UI_SIZE.x * 0.78, HEART_UI_SIZE.y * 0.5 - PLAYER_HEALTH_BAR_SIZE.y * 0.5)
+	player_launch_bar = SpeedBarScript.new()
+	player_launch_bar.name = "PlayerLaunchBar"
+	player_launch_bar.title = "LAUNCH"
+	player_launch_bar.fill_color = PLAYER_LAUNCH_BAR_FILL_COLOR
+	player_launch_bar.background_color = Color(0.19, 0.15, 0.22, 0.96)
+	player_launch_bar.show_ticks = false
+	player_launch_bar.value = 1.0
+	player_launch_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	player_launch_bar.position = player_speed_bar.position + Vector2(0.0, PLAYER_METER_ROW_SPACING)
+	player_launch_bar.size = PLAYER_LAUNCH_BAR_SIZE
+	player_launch_bar.z_index = -1
+	player_ui_layer.add_child(player_launch_bar)
+
+func _get_speed_ratio() -> float:
+	return clampf(linear_velocity.length() / SPEED_UI_FULL_SPEED, 0.0, 1.0)
+
+func _update_speed_ui(delta: float) -> void:
+	if player_speed_bar != null:
+		player_speed_bar.value = lerpf(player_speed_bar.value, _get_speed_ratio(), 1.0 - exp(-SPEED_UI_RESPONSE * delta))
+	if player_launch_bar != null:
+		player_launch_bar.value = 1.0 - clampf(jab_cooldown_remaining / JAB_COOLDOWN, 0.0, 1.0)
 
 func _update_heart_ui(delta: float) -> void:
 	if heart_texture_rect == null:
 		return
 
-	heart_beat_time += delta
-	var beat_progress := fmod(heart_beat_time * HEART_BEAT_SPEED, 1.0)
-	var primary_pulse := _heart_pulse(beat_progress)
-	var secondary_progress := fmod(beat_progress - HEART_BEAT_SECOND_PULSE_DELAY + 1.0, 1.0)
-	var secondary_pulse := _heart_pulse(secondary_progress) * 0.55
+	var speed_ratio := _get_speed_ratio()
+	var beat_speed := lerpf(HEART_BEAT_IDLE_SPEED, HEART_BEAT_MAX_SPEED, speed_ratio)
+	heart_thump_time += delta
+	heart_beat_phase += delta * beat_speed
+	if heart_beat_phase >= 1.0:
+		heart_beat_phase = fmod(heart_beat_phase, 1.0)
+		heart_thump_time = heart_beat_phase / beat_speed
+	# Speed changes the gap between beats, while each thump runs in real seconds.
+	var primary_pulse := _heart_pulse(heart_thump_time)
+	var secondary_pulse := _heart_pulse(heart_thump_time - HEART_SECOND_THUMP_DELAY) * 0.55
 	var pulse := maxf(primary_pulse, secondary_pulse)
-	var squash := pulse * HEART_BEAT_SCALE_AMOUNT
+	var squash := pulse * lerpf(HEART_IDLE_SCALE_AMOUNT, HEART_MAX_SCALE_AMOUNT, speed_ratio)
 	heart_texture_rect.scale = Vector2(1.0 + squash * 0.55, 1.0 + squash)
-	heart_texture_rect.rotation = sin(heart_beat_time * HEART_BEAT_SPEED * TAU) * HEART_BEAT_ROTATION_AMOUNT * pulse
+	var rotation_amount := lerpf(HEART_IDLE_ROTATION_AMOUNT, HEART_MAX_ROTATION_AMOUNT, speed_ratio)
+	heart_texture_rect.rotation = sin(heart_thump_time / HEART_THUMP_DURATION * TAU) * rotation_amount * pulse
+	heart_texture_rect.position = HEART_UI_POSITION + Vector2(0.0, -pulse * lerpf(0.5, 4.0, speed_ratio))
 
-func _heart_pulse(progress: float) -> float:
-	var pulse_width := 0.18
-	if progress > pulse_width:
+func _heart_pulse(elapsed: float) -> float:
+	if elapsed < 0.0 or elapsed >= HEART_THUMP_DURATION:
 		return 0.0
-	var normalized := progress / pulse_width
+	var normalized := elapsed / HEART_THUMP_DURATION
 	return sin(normalized * PI)
 
 func _update_jab(delta: float) -> void:
-	var left_mouse_pressed := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var launch_pressed := _is_launch_pressed()
 
 	if jab_cooldown_remaining > 0.0:
 		jab_cooldown_remaining = maxf(jab_cooldown_remaining - delta, 0.0)
@@ -550,39 +537,20 @@ func _update_jab(delta: float) -> void:
 		if jab_active_remaining <= 0.0:
 			_end_jab_attack()
 
-	if left_mouse_pressed and not was_left_mouse_pressed and _can_start_jab_charge():
-		_start_jab_charge()
+	if launch_pressed and not was_launch_pressed and _can_start_jab_attack():
+		_start_jab_attack()
 
-	if jab_charging and left_mouse_pressed:
-		jab_charge_time = minf(jab_charge_time + delta, JAB_MAX_CHARGE_TIME)
-		jab_charge_ratio = jab_charge_time / JAB_MAX_CHARGE_TIME
+	was_launch_pressed = launch_pressed
 
-	if jab_charging and not left_mouse_pressed and was_left_mouse_pressed:
-		_release_jab_attack()
+func _can_start_jab_attack() -> bool:
+	return jab_cooldown_remaining <= 0.0 and jab_active_remaining <= 0.0
 
-	was_left_mouse_pressed = left_mouse_pressed
-	_update_jab_meter()
-
-func _can_start_jab_charge() -> bool:
-	return not jab_charging and jab_cooldown_remaining <= 0.0 and jab_active_remaining <= 0.0
-
-func _start_jab_charge() -> void:
+func _start_jab_attack() -> void:
 	_release_grapple()
-	jab_charging = true
-	jab_charge_time = 0.0
-	jab_charge_ratio = 0.0
-
-func _release_jab_attack() -> void:
-	jab_charging = false
-	var charge_ratio := clampf(jab_charge_time / JAB_MAX_CHARGE_TIME, 0.0, 1.0)
-	jab_charge_ratio = charge_ratio
-	var jab_length := lerpf(JAB_MIN_LENGTH, JAB_MAX_LENGTH, charge_ratio)
-	var cooldown := lerpf(JAB_MIN_COOLDOWN, JAB_MAX_COOLDOWN, charge_ratio)
-	jab_cooldown_total = cooldown
-	jab_cooldown_remaining = cooldown
+	jab_cooldown_remaining = JAB_COOLDOWN
 	jab_active_remaining = JAB_ACTIVE_TIME
 	jab_hit_bodies.clear()
-	_position_jab(jab_length)
+	_position_jab(JAB_LENGTH)
 	jab_shape.disabled = false
 	jab_area.monitoring = true
 	call_deferred("_check_current_jab_overlaps")
@@ -632,7 +600,9 @@ func _clamp_jab_length_to_world_hit(direction: Vector2, jab_length: float) -> fl
 	var hit_position := result.get("position", global_position + direction * (JAB_START_OFFSET + jab_length)) as Vector2
 	var hit_distance := maxf(global_position.distance_to(hit_position) - JAB_START_OFFSET, 0.0)
 	if _is_jab_world_recoil_collider(result.get("collider")):
-		_apply_jab_world_recoil(direction)
+		var hit_normal := (result.get("normal", -direction) as Vector2).normalized()
+		var surface_distance := maxf((global_position - hit_position).dot(hit_normal) - LevelDocument.PLAYER_RADIUS, 0.0)
+		_apply_jab_world_recoil(direction, surface_distance)
 	return minf(jab_length, hit_distance)
 
 func _is_jab_world_recoil_collider(collider: Variant) -> bool:
@@ -644,11 +614,15 @@ func _is_jab_world_recoil_collider(collider: Variant) -> bool:
 	var parent := collider_node.get_parent()
 	return parent == null or not parent.has_method("receive_jab_hit")
 
-func _apply_jab_world_recoil(hit_direction: Vector2) -> void:
+func _apply_jab_world_recoil(hit_direction: Vector2, surface_distance: float) -> void:
 	if hit_direction.length_squared() <= 0.001:
 		return
-	var recoil_impulse := lerpf(JAB_WORLD_RECOIL_MIN_IMPULSE, JAB_WORLD_RECOIL_MAX_IMPULSE, clampf(jab_charge_ratio, 0.0, 1.0))
-	apply_central_impulse(-hit_direction.normalized() * recoil_impulse)
+	var launch_direction := -hit_direction.normalized()
+	var proximity := 1.0 - smoothstep(0.0, JAB_LENGTH, surface_distance)
+	var launch_speed := lerpf(JAB_WORLD_LAUNCH_MIN_SPEED, JAB_WORLD_LAUNCH_MAX_SPEED, proximity)
+	var outward_speed := linear_velocity.dot(launch_direction)
+	# Cancel closing velocity, preserve sideways motion and already-faster escapes.
+	linear_velocity += launch_direction * maxf(launch_speed - outward_speed, 0.0)
 
 func _update_jab_visual_line() -> void:
 	if jab_chain_line == null or jab_mace_sprite == null or not jab_chain_line.visible:
@@ -690,12 +664,10 @@ func _try_apply_jab_hit(target: Node) -> void:
 	if direction.length_squared() < 1.0:
 		direction = Vector2.RIGHT.rotated(jab_area.global_rotation)
 	direction = Vector2(direction.x, direction.y - JAB_UPWARD_BIAS * direction.length()).normalized()
-	var impulse := lerpf(JAB_MIN_IMPULSE, JAB_MAX_IMPULSE, jab_charge_ratio)
-	var damage := int(round(lerpf(float(JAB_MIN_DAMAGE), float(JAB_MAX_DAMAGE), jab_charge_ratio)))
 	if receiver.has_method("receive_jab_hit"):
-		receiver.receive_jab_hit(direction, impulse, damage)
+		receiver.receive_jab_hit(direction, JAB_IMPULSE, JAB_DAMAGE)
 	elif receiver is RigidBody2D:
-		(receiver as RigidBody2D).apply_central_impulse(direction * impulse)
+		(receiver as RigidBody2D).apply_central_impulse(direction * JAB_IMPULSE)
 
 func _end_jab_attack() -> void:
 	jab_area.monitoring = false
@@ -714,29 +686,6 @@ func _hide_jab_visual() -> void:
 	if jab_chain_line != null:
 		jab_chain_line.visible = false
 
-func _update_jab_meter() -> void:
-	if jab_meter == null:
-		return
-
-	var meter_visible := not controls_locked and (jab_charging or jab_cooldown_remaining > 0.0)
-	jab_meter.visible = meter_visible
-	if not meter_visible:
-		jab_meter.set_vibration_strength(0.0)
-		return
-
-	var meter_ratio := 0.0
-	if jab_charging:
-		meter_ratio = clampf(jab_charge_time / JAB_MAX_CHARGE_TIME, 0.0, 1.0)
-		jab_meter.set_fill_color(CHARGE_METER_EMPTY_COLOR.lerp(CHARGE_METER_ACTIVE_COLOR, meter_ratio))
-		jab_meter.set_vibration_strength(JAB_METER_MAX_SHAKE * meter_ratio)
-	else:
-		meter_ratio = clampf(jab_cooldown_remaining / jab_cooldown_total, 0.0, 1.0)
-		jab_meter.set_fill_color(CHARGE_METER_COOLDOWN_COLOR)
-		jab_meter.set_vibration_strength(0.0)
-
-	jab_meter.set_health_ratio(meter_ratio)
-	jab_meter.set_anchor(global_position + CHARGE_METER_OFFSET)
-
 func _get_move_direction() -> float:
 	return clampf(
 		Input.get_axis("ui_left", "ui_right") + float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
@@ -745,7 +694,10 @@ func _get_move_direction() -> float:
 	)
 
 func _is_grapple_pressed() -> bool:
-	return Input.is_key_pressed(KEY_SPACE)
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+
+func _is_launch_pressed() -> bool:
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
 
 func _update_grapple(is_grapple_pressed: bool) -> void:
 	if is_grapple_pressed and not was_grapple_pressed:
@@ -851,6 +803,9 @@ func _update_grapple_cursor() -> void:
 
 func _update_grapple_direction() -> void:
 	if grapple_direction == null:
+		return
+	if not show_grapple_direction:
+		grapple_direction.hide()
 		return
 	var canvas := get_canvas_transform()
 	# Aiming still has a direction when no surface is in range (often overhead).

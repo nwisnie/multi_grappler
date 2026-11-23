@@ -42,7 +42,11 @@ func _checkpoint_checks() -> void:
 	var point := hoop.global_position
 	var radius: float = level.PASS_RADIUS
 	check(hoop.is_finish and hoop.active and not hoop.passed, "Tutorial ends in an active race finish hoop")
-	check(point.x > level.get_node("GrappleOrb3").global_position.x, "Finish is beyond the final grapple orb")
+	var final_orb_x := -INF
+	for orb in get_nodes_in_group("grapple_orbs"):
+		if level.is_ancestor_of(orb):
+			final_orb_x = maxf(final_orb_x, orb.global_position.x)
+	check(final_orb_x > -INF and point.x > final_orb_x, "Finish is beyond the final grapple orb")
 	check(not level.finished and completions == 0, "Spawning does not complete the tutorial")
 	# A path just outside the opening must miss, even at high speed.
 	level.previous_position = point + Vector2(-600, -radius - 2)
@@ -108,7 +112,7 @@ func _navigation_checks() -> void:
 	shell.tutorial_restart_button.pressed.emit()
 	check(not paused and shell.screen == shell.Screen.TUTORIAL and shell.world.get_instance_id() != old_id, "Restart Tutorial starts a fresh tutorial and unpauses")
 	check(not shell.tutorial_complete_dialog.visible and not shell.dimmer.visible, "Restart dismisses the completion UI")
-	check(not shell.world.finished and shell.world.current_instruction == "WASD to move", "Restart restores the initial tutorial state")
+	check(not shell.world.finished and shell.world.current_instruction == "Use A/D or the left/right arrow keys to move.", "Restart restores the initial tutorial state")
 	check(shell.world.player.position == Vector2(-872, 138) and not shell.world.player.controls_locked, "Restart restores the spawn and player controls")
 	check(shell.world.player.initial_camera_zoom == Vector2.ONE * 0.57 and shell.world.player.show_grapple_cursor, "Restart preserves player settings")
 	level = shell.world

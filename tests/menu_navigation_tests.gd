@@ -26,7 +26,7 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	check(shell.title_screen.visible and shell.world == null, "Start on title, without running tutorial")
-	check(is_equal_approx(shell.camera_zoom, 0.5) and is_equal_approx(shell.camera_zoom_slider.value, 0.5) and is_equal_approx(shell.camera_zoom_slider.ratio, 0.5), "Camera zoom defaults to a 50% view at the center of the slider")
+	check(is_equal_approx(shell.camera_zoom, 0.46) and is_equal_approx(shell.camera_zoom_slider.value, 0.46), "Camera zoom defaults to 46% in Settings")
 	check(shell.title_screen.tutorial_button.text == "Tutorial" and shell.title_screen.editor_button.text == "Level Editor", "Title has tutorial and editor routes")
 	check(shell.title_screen.multiplayer_button.has_focus() and shell.title_screen.main_actions.visible and not shell.title_screen.multiplayer_actions.visible, "Title starts with Multiplayer selected on the main menu")
 	check(shell.title_screen.multiplayer_button.get_index() < shell.title_screen.editor_button.get_index() and shell.title_screen.editor_button.get_index() < shell.title_screen.tutorial_button.get_index(), "Main menu order is Multiplayer, Level Editor, Tutorial")
@@ -38,6 +38,8 @@ func _run() -> void:
 	check(not paused and shell.world == null, "Title settings does not start or pause gameplay")
 	shell.camera_zoom_slider.value = 0.61
 	shell.wall_cursor_toggle.button_pressed = true
+	check(shell.grapple_direction_toggle.button_pressed, "The direction indicator is on by default")
+	shell.grapple_direction_toggle.button_pressed = false
 	shell.settings_back_button.pressed.emit()
 	await process_frame
 	check(not shell.settings_dialog.visible and not shell.dimmer.visible and not shell.pause_dialog.visible, "Back from title settings restores the main menu")
@@ -134,6 +136,7 @@ func _run() -> void:
 	await physics_frame
 	check(shell.world != null and not shell.title_screen.visible, "Tutorial opens base level")
 	check(shell._player().initial_camera_zoom == Vector2.ONE * 0.61 and shell._player().show_grapple_cursor, "Tutorial applies settings chosen from the main menu")
+	check(not shell._player().show_grapple_direction, "The tutorial applies the direction setting chosen from the main menu")
 	check(shell._player() != null and not shell.has_node("Navigation"), "Gameplay has a player and no top navigation")
 	key(shell, KEY_ESCAPE)
 	check(paused and shell.pause_dialog.visible and shell._player().controls_locked, "Escape freezes gameplay and opens pause menu")
@@ -144,6 +147,9 @@ func _run() -> void:
 	shell.show_settings()
 	check(paused and shell.settings_dialog.visible and not shell.pause_dialog.visible, "Settings stays paused")
 	check(shell._player().camera_zoom_preview, "Opening Settings starts a camera preview")
+	shell.grapple_direction_toggle.button_pressed = true
+	check(shell._player().show_grapple_direction, "Settings can reenable the direction indicator for the current player")
+	shell.grapple_direction_toggle.button_pressed = false
 	shell.camera_zoom_slider.value = 0.57
 	shell.wall_cursor_toggle.button_pressed = true
 	check(shell._player().initial_camera_zoom == Vector2.ONE * 0.57 and shell._player().show_grapple_cursor, "Settings update player")
@@ -177,21 +183,24 @@ func _run() -> void:
 	check(not paused and not shell.pause_dialog.visible and not shell._player().controls_locked, "Escape resumes gameplay")
 	key(shell, KEY_P)
 	check(paused and shell.pause_dialog.visible, "P is an alternative pause key")
-	var held_space := InputEventKey.new()
-	held_space.keycode = KEY_SPACE
-	held_space.pressed = true
-	Input.parse_input_event(held_space)
-	Input.flush_buffered_events()
-	shell.resume_game()
-	await process_frame
-	await process_frame
-	check(shell._player().controls_locked, "Held grapple key cannot fire after menu resume")
-	held_space.pressed = false
-	Input.parse_input_event(held_space)
-	Input.flush_buffered_events()
-	await process_frame
-	await process_frame
-	check(not shell._player().controls_locked, "Controls resume once held key is released")
+	for button in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		if not paused:
+			shell.pause_game()
+		var held := InputEventMouseButton.new()
+		held.button_index = button
+		held.pressed = true
+		Input.parse_input_event(held)
+		Input.flush_buffered_events()
+		shell.resume_game()
+		await process_frame
+		await process_frame
+		check(shell._player().controls_locked, "Held mouse button %s cannot fire after menu resume" % button)
+		held.pressed = false
+		Input.parse_input_event(held)
+		Input.flush_buffered_events()
+		await process_frame
+		await process_frame
+		check(not shell._player().controls_locked, "Controls resume once mouse button %s is released" % button)
 	shell.show_main_menu()
 	check(not paused and shell.world == null and shell.title_screen.visible, "Return to main menu clears pause and disposes world")
 	check(shell.title_screen.main_actions.visible and not shell.title_screen.multiplayer_actions.visible, "Returning from gameplay resets the Multiplayer submenu")
@@ -224,6 +233,7 @@ func _run() -> void:
 	shell._restart_playtest()
 	check(not paused and shell._player().get_instance_id() != player_id, "Restart from pause creates a fresh player")
 	check(shell._player().initial_camera_zoom == Vector2.ONE * 0.57 and shell._player().show_grapple_cursor, "Respawn preserves settings")
+	check(not shell._player().show_grapple_direction, "The direction setting stays off for the replacement player")
 	shell.pause_game()
 	shell.show_editor()
 	check(not paused and LevelCodec.encode_level(shell.editor.document) == code, "Back to editor unpauses and preserves draft")

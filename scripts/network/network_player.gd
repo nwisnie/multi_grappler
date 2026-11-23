@@ -103,7 +103,7 @@ func _submit_state(location: Vector2, angle: float, speed: Vector2, grappling: b
 	network_grapple_anchor = anchor
 
 func _physics_process(delta: float) -> void:
-	if spawn_controls_pending and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not Input.is_key_pressed(KEY_SPACE):
+	if spawn_controls_pending and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		spawn_controls_pending = false
 		set_controls_locked(false)
 	if not Rect2(Vector2.ZERO, Vector2.ONE * LevelDocument.BOARD_SIZE).has_point(position):

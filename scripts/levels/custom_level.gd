@@ -85,7 +85,7 @@ func _start_race(ball: RigidBody2D) -> void:
 func _physics_process(_delta: float) -> void:
 	if not is_instance_valid(player):
 		return
-	if player.controls_locked and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not Input.is_key_pressed(KEY_SPACE):
+	if player.controls_locked and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		player.set_controls_locked(false)
 	if not Rect2(Vector2.ZERO, Vector2.ONE * LevelDocument.BOARD_SIZE).has_point(player.position) and not restart_pending:
 		restart_pending = true
