@@ -26,7 +26,7 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	check(shell.title_screen.visible and shell.world == null, "Start on title, without running tutorial")
-	check(is_equal_approx(shell.camera_zoom, 0.5) and is_equal_approx(shell.camera_zoom_slider.value, 0.5), "Camera zoom defaults to a wider 50% view")
+	check(is_equal_approx(shell.camera_zoom, 0.5) and is_equal_approx(shell.camera_zoom_slider.value, 0.5) and is_equal_approx(shell.camera_zoom_slider.ratio, 0.5), "Camera zoom defaults to a 50% view at the center of the slider")
 	check(shell.title_screen.tutorial_button.text == "Tutorial" and shell.title_screen.editor_button.text == "Level Editor", "Title has tutorial and editor routes")
 	check(shell.title_screen.multiplayer_button.has_focus() and shell.title_screen.main_actions.visible and not shell.title_screen.multiplayer_actions.visible, "Title starts with Multiplayer selected on the main menu")
 	check(shell.title_screen.multiplayer_button.get_index() < shell.title_screen.editor_button.get_index() and shell.title_screen.editor_button.get_index() < shell.title_screen.tutorial_button.get_index(), "Main menu order is Multiplayer, Level Editor, Tutorial")
@@ -149,8 +149,13 @@ func _run() -> void:
 	check(shell._player().initial_camera_zoom == Vector2.ONE * 0.57 and shell._player().show_grapple_cursor, "Settings update player")
 	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.57), "Zoom slider updates the visible camera immediately while paused")
 	check(root.get_canvas_transform().get_scale().is_equal_approx(Vector2.ONE * 0.57), "The rendered viewport zoom updates before gameplay resumes")
-	shell.camera_zoom_slider.value = 0.45
-	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.45), "Zoom preview reaches the slider minimum")
+	shell.camera_zoom_slider.value = shell.camera_zoom_slider.min_value
+	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.15), "Zoom preview reaches the wider 15% minimum")
+	await process_frame
+	await process_frame
+	var sky := shell.world.get_node("SkyBackground") as Sprite2D
+	var sky_bounds: Rect2 = sky.get_global_transform_with_canvas() * sky.get_rect()
+	check(paused and sky_bounds.grow(1.0).encloses(root.get_visible_rect()), "Sky resizes to cover the entire viewport while Settings previews the widest zoom with gameplay paused")
 	shell.camera_zoom_slider.value = 0.85
 	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.85), "Zoom preview reaches the slider maximum")
 	shell.camera_zoom_slider.value = 0.57
@@ -160,6 +165,12 @@ func _run() -> void:
 	shell._close_settings()
 	check(paused and shell.pause_dialog.visible, "Back from settings returns to paused menu")
 	check(not shell._player().camera_zoom_preview, "Closing Settings restores normal camera behavior")
+	var velocity: Vector2 = shell._player().linear_velocity
+	shell._player().linear_velocity = Vector2(2500, 0)
+	shell.camera_zoom_slider.value = shell.camera_zoom_slider.min_value
+	check(shell._player().camera.zoom.is_equal_approx(Vector2.ONE * 0.15), "High-speed gameplay preserves a zoom setting wider than the automatic speed zoom")
+	shell._player().linear_velocity = velocity
+	shell.camera_zoom_slider.value = 0.57
 	key(shell, KEY_ESCAPE)
 	await process_frame
 	await process_frame

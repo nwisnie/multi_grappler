@@ -16,8 +16,11 @@ list. They cannot be saved again from the browser or pause menu; **My Levels** a
 provides access to them. Ownership uses account IDs, not matching display names.
 These views are also available when choosing a level in **Host Game**. Create New opens the existing
 editor, preserving any draft from this session. In the editor, **Upload** opens
-a level name form and shows the signed-in username. Uploading requires a playable spawn
-and a username/password account. Settings offers sign-in, account creation, and sign-out;
+a level name form and shows the signed-in username. Uploading requires a playable spawn,
+at least one additional race checkpoint (two checkpoints including the spawn), and a
+username/password account. Both the editor and server enforce the checkpoint minimum.
+Drafts can still be edited, exported, and playtested before adding the second checkpoint;
+previously published courses remain available. Settings offers sign-in, account creation, and sign-out;
 clicking Upload while signed out prompts for sign-in or account creation first.
 Published community levels can be restarted or left through the pause menu.
 
@@ -143,6 +146,12 @@ accounts. Published records cannot be edited. Uploads are limited
 to approximately five per public IP per minute; reads and deletions share the existing connection
 limiter. Upload bodies, decompression, format, grid bounds, race data, and spawn clearance
 are validated before insertion. The Worker stores data only, never executable resources.
+
+New checkpoint lines use grid intersections, including the outer grid edges. Their
+optional `V` trailer includes each line's coordinate type so a level can also retain
+older cell-centered lines. Existing `L` trailers keep their positions, codes, and
+leaderboard IDs. Deploy the updated Worker and re-export the game together for the
+new line format; no database migration is required.
 
 `npm test` includes real local D1 tests for publication, browsing, malformed uploads,
 duplicate retries, and 110 concurrent uploads competing for 100 slots. Godot checks:

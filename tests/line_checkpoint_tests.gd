@@ -28,7 +28,9 @@ func course() -> LevelDocument:
 func click_cell(editor: GridLevelEditor, point: Vector2i) -> void:
 	editor.mouse_on_board = true
 	editor.hover_cell = point
-	editor._click(LevelDocument.cell_position(point))
+	editor.hover_vertex = point
+	var placing_line := editor.endpoint_checkpoint > 0 or (editor.tool in [GridLevelEditor.Tool.SPAWN, GridLevelEditor.Tool.CHECKPOINT] and editor.checkpoint_shape == 1)
+	editor._click(LevelDocument.vertex_position(point) if placing_line else LevelDocument.cell_position(point))
 
 func _run() -> void:
 	_data_checks()
@@ -48,7 +50,16 @@ func _data_checks() -> void:
 		var imported: LevelDocument = decoded["document"]
 		check(imported.checkpoint_lines == document.checkpoint_lines and imported.spawn_line_position == 25, "Endpoints and spawn percentage round trip")
 		check(LevelCodec.encode_level(imported) == code, "Line codes are deterministic")
-	check(document.spawn_position() == Vector2(1260, 1080), "Spawn uses the chosen point along its line")
+	check(document.spawn_position() == Vector2(1200, 1020), "Spawn uses the chosen point along its line")
+	check(document.checkpoint_endpoint(2, "a") == LevelDocument.vertex_position(Vector2i(20, 4)), "New checkpoint endpoints use the same intersections as terrain")
+	var legacy_bytes := PackedByteArray([1, 0, 0, 0, 10, 10, 82, 1, 1, 1, 20, 10, 76, 1, 25, 1, 10, 7, 10, 13])
+	var legacy_code := LevelCodec.PREFIX + Marshalls.raw_to_base64(legacy_bytes.compress(FileAccess.COMPRESSION_DEFLATE))
+	var legacy = LevelCodec.decode_level(legacy_code)
+	check(legacy["error"].is_empty() and legacy["document"].spawn_position() == Vector2(1260, 1080), "Existing line codes retain their exact cell-centered positions")
+	check(LevelCodec.encode_level(legacy["document"]) == legacy_code, "Existing publications keep their original code and leaderboard ID")
+	legacy["document"].set_checkpoint_line(2, Vector2i(20, 0), Vector2i(20, 100))
+	var mixed = LevelCodec.decode_level(LevelCodec.encode_level(legacy["document"]))
+	check(mixed["error"].is_empty() and mixed["document"].spawn_position() == Vector2(1260, 1080) and mixed["document"].checkpoint_endpoint(2, "b") == Vector2(2400, 12000), "New and legacy lines coexist, including vertices on the grid edge")
 	var changed := document.copy()
 	changed.checkpoint_lines[2]["a"] = Vector2i(20, 2)
 	check(document.checkpoint_lines[2]["a"] == Vector2i(20, 4), "Line endpoints are deeply copied")
@@ -65,8 +76,8 @@ func _data_checks() -> void:
 	check(changed.finish_checkpoint == 1 and not changed.checkpoint_lines.has(4), "Deleting the finish removes its line geometry")
 	changed = document.copy()
 	changed.move_checkpoint(2, Vector2i(22, 12))
-	check(changed.checkpoint_lines[2] == {"a": Vector2i(22, 6), "b": Vector2i(22, 18)}, "Moving a whole line translates both endpoints")
-	for line in [{"a": Vector2i(20, 4), "b": Vector2i(20, 4)}, {"a": Vector2i(-1, 4), "b": Vector2i(20, 16)}, {"a": Vector2i(20, 4)}, {"a": "bad", "b": Vector2i(20, 16)}]:
+	check(changed.checkpoint_lines[2] == {"a": Vector2i(22, 6), "b": Vector2i(22, 18), "vertices": true}, "Moving a whole line translates both endpoints")
+	for line in [{"a": Vector2i(20, 4), "b": Vector2i(20, 4), "vertices": true}, {"a": Vector2i(-1, 4), "b": Vector2i(20, 16), "vertices": true}, {"a": Vector2i(20, 4)}, {"a": "bad", "b": Vector2i(20, 16)}]:
 		changed = document.copy()
 		changed.checkpoint_lines[2] = line
 		check(not changed.validate().is_empty(), "Invalid checkpoint line endpoints are rejected")
@@ -85,7 +96,7 @@ func _data_checks() -> void:
 	plain.spawn = Vector2i(10, 10)
 	plain.checkpoints.append(Vector2i(20, 10))
 	var payload := Marshalls.base64_to_raw(LevelCodec.encode_level(plain).substr(4)).decompress_dynamic(LevelCodec.MAX_PAYLOAD, FileAccess.COMPRESSION_DEFLATE)
-	for trailer in [[76], [76, 0, 50], [76, 1, 101, 2, 20, 5, 20, 15], [76, 1, 50, 3, 20, 5, 20, 15], [76, 1, 50, 2, 20, 5, 20, 5], [76, 1, 50, 2, 100, 5, 20, 15], [76, 2, 50, 2, 20, 5, 20, 15, 2, 25, 5, 25, 15]]:
+	for trailer in [[76], [76, 0, 50], [76, 1, 101, 2, 20, 5, 20, 15], [76, 1, 50, 3, 20, 5, 20, 15], [76, 1, 50, 2, 20, 5, 20, 5], [76, 1, 50, 2, 100, 5, 20, 15], [76, 2, 50, 2, 20, 5, 20, 15, 2, 25, 5, 25, 15], [86, 1, 50, 2, 2, 20, 0, 20, 100], [86, 1, 50, 2, 1, 20, 0, 20, 101], [86, 1, 50, 2, 0, 20, 0, 20, 100], [86, 1, 50, 2, 1, 20, 0, 20]]:
 		var invalid := payload.duplicate()
 		invalid.append_array(PackedByteArray(trailer))
 		check(not LevelCodec.decode_level(LevelCodec.PREFIX + Marshalls.raw_to_base64(invalid.compress(FileAccess.COMPRESSION_DEFLATE)))["error"].is_empty(), "Malformed line trailer is rejected")
@@ -95,7 +106,7 @@ func _data_checks() -> void:
 		changed.checkpoints.append(Vector2i(index % 100, index / 100))
 	for number in range(1, LevelDocument.MAX_CHECKPOINTS + 2):
 		var point := changed.checkpoint_cell(number)
-		changed.checkpoint_lines[number] = {"a": point, "b": point + Vector2i(0, -1 if number == 1 else 1)}
+		changed.checkpoint_lines[number] = {"a": point, "b": point + Vector2i(0, -1 if number == 1 else 1), "vertices": true}
 	check(LevelCodec.decode_level(LevelCodec.encode_level(changed))["document"].checkpoint_lines.size() == 129, "All 129 checkpoints can be lines")
 
 func _editor_checks() -> void:
@@ -113,7 +124,7 @@ func _editor_checks() -> void:
 	editor.checkpoint_endpoints.pressed.emit()
 	click_cell(editor, Vector2i(28, 7))
 	click_cell(editor, Vector2i(32, 13))
-	check(editor.document.checkpoint_lines[3] == {"a": Vector2i(28, 7), "b": Vector2i(32, 13)}, "Set endpoints defines an existing line with two clicks")
+	check(editor.document.checkpoint_lines[3] == {"a": Vector2i(28, 7), "b": Vector2i(32, 13), "vertices": true}, "Set endpoints defines an existing line with two clicks")
 	editor.undo()
 	check(editor.document.checkpoint_lines[3]["a"] == Vector2i(30, 8), "Endpoint replacement is undoable")
 	editor.undo()
@@ -121,19 +132,19 @@ func _editor_checks() -> void:
 	editor.redo()
 	check(editor.document.checkpoint_lines.has(3), "Shape conversion supports redo")
 	editor._set_tool(GridLevelEditor.Tool.SELECT)
-	editor._select_at(LevelDocument.cell_position(Vector2i(30, 10)))
-	editor._update_drag(LevelDocument.cell_position(Vector2i(31, 11)))
+	editor._select_at(LevelDocument.vertex_position(Vector2i(30, 10)))
+	editor._update_drag(LevelDocument.vertex_position(Vector2i(31, 11)))
 	editor._finish_drag()
-	check(editor.document.checkpoint_lines[3] == {"a": Vector2i(31, 9), "b": Vector2i(31, 13)}, "Dragging a whole checkpoint translates both endpoints")
+	check(editor.document.checkpoint_lines[3] == {"a": Vector2i(31, 9), "b": Vector2i(31, 13), "vertices": true}, "Dragging a whole checkpoint translates both endpoints")
 	editor.undo()
-	editor._select_at(LevelDocument.cell_position(Vector2i(30, 8)))
+	editor._select_at(LevelDocument.vertex_position(Vector2i(30, 8)))
 	check(editor.drag.get("kind") == "checkpoint_endpoint", "Select picks a line endpoint")
-	editor._update_drag(LevelDocument.cell_position(Vector2i(27, 7)))
+	editor._update_drag(LevelDocument.vertex_position(Vector2i(27, 7)))
 	editor._finish_drag()
 	check(editor.document.checkpoint_lines[3]["a"] == Vector2i(27, 7), "Dragging reshapes a line independently")
 	var before := LevelCodec.encode_level(editor.document)
-	editor._select_at(LevelDocument.cell_position(Vector2i(27, 7)))
-	editor._update_drag(LevelDocument.cell_position(Vector2i(30, 12)))
+	editor._select_at(LevelDocument.vertex_position(Vector2i(27, 7)))
+	editor._update_drag(LevelDocument.vertex_position(Vector2i(30, 12)))
 	editor._finish_drag()
 	check(LevelCodec.encode_level(editor.document) == before, "Collapsing endpoints rolls back the drag")
 	editor._set_tool(GridLevelEditor.Tool.CHECKPOINT)
@@ -142,27 +153,27 @@ func _editor_checks() -> void:
 	click_cell(editor, Vector2i(50, 5))
 	check(editor.pending.size() == 1 and editor.document.checkpoints.size() == 3, "New line rejects coincident endpoints without losing the first point")
 	click_cell(editor, Vector2i(50, 15))
-	check(editor.document.checkpoint_lines[5] == {"a": Vector2i(50, 5), "b": Vector2i(50, 15)}, "New line placement uses two clicks")
+	check(editor.document.checkpoint_lines[5] == {"a": Vector2i(50, 5), "b": Vector2i(50, 15), "vertices": true}, "New line placement uses two clicks")
 	editor._change_checkpoint_type(0)
 	check(not editor.document.checkpoint_lines.has(5), "Line converts back to a hoop")
 	editor._set_tool(GridLevelEditor.Tool.CHECKPOINT)
-	click_cell(editor, Vector2i(10, 10))
+	editor._click(editor.document.checkpoint_position(1))
 	check(editor.selection.get("kind") == "spawn" and editor.checkpoint_order.text == "1" and editor.spawn_position_controls.visible, "Race checkpoint tool exposes spawn line properties")
 	editor.spawn_position.value = 75
-	check(editor.document.spawn_position() == Vector2(1260, 1440), "Spawn percentage moves the actual point on its line")
+	check(editor.document.spawn_position() == Vector2(1200, 1380), "Spawn percentage moves the actual point on its line")
 	editor.undo()
 	check(editor.document.spawn_line_position == 25, "Spawn position change is undoable")
 	editor._set_tool(GridLevelEditor.Tool.SELECT)
-	editor._select_at(LevelDocument.cell_position(Vector2i(10, 10)))
-	editor._update_drag(LevelDocument.cell_position(Vector2i(12, 12)))
+	editor._select_at(LevelDocument.vertex_position(Vector2i(10, 10)))
+	editor._update_drag(LevelDocument.vertex_position(Vector2i(12, 12)))
 	editor._finish_drag()
-	check(editor.document.spawn_position() == Vector2(1500, 1320) and editor.document.spawn_line_position == 25, "Dragging a spawn line preserves the relative player position")
+	check(editor.document.spawn_position() == Vector2(1440, 1260) and editor.document.spawn_line_position == 25, "Dragging a spawn line preserves the relative player position")
 	editor.undo()
 	editor._set_tool(GridLevelEditor.Tool.SPAWN)
 	editor._change_checkpoint_type(1)
 	click_cell(editor, Vector2i(5, 20))
 	click_cell(editor, Vector2i(15, 20))
-	check(editor.document.checkpoint_lines[1] == {"a": Vector2i(5, 20), "b": Vector2i(15, 20)}, "Spawn tool places a two-point line")
+	check(editor.document.checkpoint_lines[1] == {"a": Vector2i(5, 20), "b": Vector2i(15, 20), "vertices": true}, "Spawn tool places a two-point line")
 	editor._change_checkpoint_type(0)
 	check(not editor.document.checkpoint_lines.has(1), "Spawn line converts back to a point with a hoop")
 	var exported := LevelCodec.encode_level(editor.document)
@@ -260,8 +271,8 @@ func _race_checks() -> void:
 	race.advance_between(center - normal, center + normal)
 	check(race.next_number == 4, "Diagonal lines count perpendicular passage")
 	race.reset()
-	level.player.position = LevelDocument.cell_position(Vector2i(15, 5))
-	check(race.next_position() == LevelDocument.cell_position(Vector2i(15, 10)), "HUD targets the nearest point on a line")
+	level.player.position = LevelDocument.vertex_position(Vector2i(15, 5))
+	check(race.next_position() == LevelDocument.vertex_position(Vector2i(15, 10)), "HUD targets the nearest point on a line")
 	level.free()
 	await process_frame
 

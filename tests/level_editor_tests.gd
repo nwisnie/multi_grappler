@@ -122,6 +122,16 @@ func _editor_checks(playable: LevelDocument) -> void:
 	await process_frame
 	await process_frame
 	await process_frame
+	var actions := {}
+	for button in editor.top_panel.find_children("*", "Button", true, false):
+		actions[button.text] = button
+	var upload: Button = actions["Upload"]
+	var playtest: Button = actions["Playtest"]
+	var leave: Button = actions["Return to main menu"]
+	check(upload.theme_type_variation == &"PrimaryButton" and playtest.theme_type_variation != &"PrimaryButton", "Upload is the highlighted editor action")
+	check(upload.get_parent() == playtest.get_parent() and upload.get_index() == 0, "Upload leads the group containing Playtest")
+	check(leave.get_parent() != upload.get_parent() and leave.get_parent().get_child_count() == 1 and leave.get_parent().get_parent().get_index() < upload.get_parent().get_parent().get_index(), "Return to main menu has its own group to the left")
+	check(actions["Fit level"].get_parent() == actions["Race Settings"].get_parent() and actions["Fit level"].get_parent() == actions["Import"].get_parent() and actions["Fit level"].get_parent() == actions["Export"].get_parent(), "Fit level shares the race settings and import/export group")
 	editor._commit(playable.copy())
 	var original := LevelCodec.encode_level(editor.document)
 	editor.clear_level()

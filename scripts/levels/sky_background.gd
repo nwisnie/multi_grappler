@@ -3,6 +3,10 @@ extends Sprite2D
 @export var camera_offset := Vector2.ZERO
 @export_range(0.1, 1.0, 0.01) var minimum_camera_zoom := 0.45
 
+func _ready() -> void:
+	# Settings previews change the camera while the gameplay tree is paused.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
 func _process(_delta: float) -> void:
 	var camera := get_viewport().get_camera_2d()
 	if camera == null or texture == null:

@@ -19,6 +19,26 @@ func settle() -> void:
 	await create_timer(MenuSlide.ENTER_DURATION + MenuSlide.EXIT_DURATION + 0.12).timeout
 	await process_frame
 
+func try_drag_popup(dialog: ConfirmationDialog) -> void:
+	var start := dialog.position
+	var point := Vector2(start) + Vector2(dialog.size.x * 0.5, 16)
+	var press := InputEventMouseButton.new()
+	press.position = point
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	root.push_input(press, true)
+	var motion := InputEventMouseMotion.new()
+	motion.position = point + Vector2(90, 55)
+	motion.relative = Vector2(90, 55)
+	motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+	root.push_input(motion, true)
+	press = InputEventMouseButton.new()
+	press.position = motion.position
+	press.button_index = MOUSE_BUTTON_LEFT
+	root.push_input(press, true)
+	await process_frame
+	check(dialog.position == start, "Dragging the caption keeps %s fixed" % dialog.title)
+
 func check_easing() -> void:
 	var control := Control.new()
 	control.size = Vector2(100, 100)
@@ -49,9 +69,11 @@ func check_easing() -> void:
 
 func check_editor_popup(dialog: ConfirmationDialog, opener: Callable) -> void:
 	opener.call()
+	check(dialog.borderless and dialog.unresizable, "Editor %s has no draggable native title bar or resize handles" % dialog.title)
 	check(dialog.visible and dialog.position.y < 0, "Editor %s swoops in from above" % dialog.title)
 	await settle()
 	check(dialog.position.y >= 0 and dialog.size.y < root.get_visible_rect().size.y, "Editor %s settles inside the viewport" % dialog.title)
+	await try_drag_popup(dialog)
 	dialog.get_cancel_button().pressed.emit()
 	check(dialog.visible, "Editor %s stays visible during its exit" % dialog.title)
 	await settle()
@@ -90,6 +112,7 @@ func _run() -> void:
 	await check_editor_popup(editor.account_dialog, editor._open_upload)
 	var draft := LevelDocument.new()
 	draft.spawn = Vector2i(10, 2)
+	draft.checkpoints.append(Vector2i(20, 2))
 	draft.segments.append({"kind": 0, "a": Vector2i(0, 5), "b": Vector2i(20, 5)})
 	editor._commit(draft)
 	var account = root.get_node("AccountSession")
@@ -121,6 +144,29 @@ func _run() -> void:
 	editor.resume()
 	await settle()
 	check(not editor.code_dialog.visible, "Suspending the editor cancels its popup animation")
+	shell.show_main_menu()
+	shell.show_level_browser()
+	var browser = shell.level_browser
+	var id := "a".repeat(64)
+	browser._received(200, {"levels": [{"id": id, "title": "Animated rankings"}]}, "")
+	browser._show_leaderboard(id)
+	check(browser.leaderboard_dialog.visible and browser.leaderboard_dialog.position.y < 0, "Top Times enters from above like the other popups")
+	check(browser.leaderboard_dialog.borderless and browser.leaderboard_dialog.unresizable, "Top Times cannot be dragged or resized")
+	await settle()
+	check(browser.leaderboard_dialog.position.y >= 0, "Top Times settles inside the viewport after its response is laid out")
+	await try_drag_popup(browser.leaderboard_dialog)
+	browser.leaderboard_dialog.get_ok_button().pressed.emit()
+	check(browser.leaderboard_dialog.visible, "Top Times remains visible during its animated Close")
+	await settle()
+	check(not browser.leaderboard_dialog.visible, "Top Times hides after its exit animation")
+	browser._show_leaderboard(id)
+	await settle()
+	var close_times := InputEventKey.new()
+	close_times.keycode = KEY_ESCAPE
+	close_times.pressed = true
+	root.push_input(close_times, true)
+	await settle()
+	check(not browser.leaderboard_dialog.visible and browser.visible, "Escape dismisses Top Times while keeping the level browser open")
 	shell.show_main_menu()
 	title.tutorial_button.pressed.emit()
 	check(shell.screen == shell.Screen.TUTORIAL and shell.world != null and not title.visible, "Tutorial starts immediately without an outgoing menu slide")

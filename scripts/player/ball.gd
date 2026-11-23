@@ -375,7 +375,9 @@ func _camera_zoom_target() -> Vector2:
 	if camera_zoom_preview:
 		return initial_camera_zoom
 	var speed_ratio := clampf(linear_velocity.length() / (MAX_GROUND_SPEED * 1.35), 0.0, 1.0)
-	return initial_camera_zoom.lerp(speed_zoom_out, speed_ratio) + interaction_zoom_offset
+	# A wider user setting must not zoom back in as the player gains speed.
+	var speed_target := speed_zoom_out.min(initial_camera_zoom)
+	return initial_camera_zoom.lerp(speed_target, speed_ratio) + interaction_zoom_offset
 
 func _update_camera(delta: float) -> void:
 	var look_ahead: Vector2 = Vector2(

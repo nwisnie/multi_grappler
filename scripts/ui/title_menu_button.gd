@@ -1,7 +1,7 @@
 extends Button
-## Slanted title-menu face with native button text and navigation.
+## Rounded and slanted menu faces with native button text and navigation.
 
-enum Segment { SINGLE, FIRST, LAST, MIDDLE }
+enum Segment { SINGLE, FIRST, LAST, MIDDLE, ROUNDED }
 
 const BORDER_WIDTH := 3.0
 const SLANT := 20.0
@@ -60,7 +60,7 @@ func _process(delta: float) -> void:
 		_selection = selection
 		_face.queue_redraw()
 	if segment != Segment.SINGLE:
-		# Joined options retain hover shading without rotating their shared seam.
+		# Keep rectangular and joined buttons steady during hover.
 		_reset_wobble()
 		return
 	var hovered := is_hovered() and not disabled

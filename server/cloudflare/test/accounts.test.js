@@ -7,7 +7,7 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 const ORIGIN = "https://wizkinews.com";
 const PASSWORD = "Test password for grapplers.";
-const CODE = "MG1-" + deflateSync(Buffer.from([1, 1, 0, 0, 10, 2, 0, 0, 5, 100, 5])).toString("base64");
+const CODE = "MG1-" + deflateSync(Buffer.from([1, 1, 0, 0, 10, 2, 0, 0, 5, 100, 5, 82, 1, 1, 1, 20, 20])).toString("base64");
 
 async function runtime(t, authLimit = 1000, registrationLimit = 1000) {
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{

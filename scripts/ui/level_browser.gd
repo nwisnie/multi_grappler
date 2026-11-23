@@ -87,10 +87,10 @@ func _ready() -> void:
 	community_button = _button("Community", show_view.bind(View.COMMUNITY))
 	saved_button = _button("Saved Levels", show_view.bind(View.SAVED))
 	my_levels_button = _button("My Levels", show_view.bind(View.MY_LEVELS))
-	heading.add_child(_button_group([community_button, saved_button, my_levels_button]))
 	refresh_button = _button("Refresh", refresh)
 	back_button = _button("Back", dismiss)
 	heading.add_child(_button_pair(refresh_button, back_button))
+	heading.add_child(_button_group([community_button, saved_button, my_levels_button]))
 	description = _label("")
 	column.add_child(description)
 	status = _label("")
@@ -210,7 +210,10 @@ func _build_leaderboard() -> void:
 	DialogStyle.apply(leaderboard_dialog, true)
 	leaderboard_dialog.get_cancel_button().hide()
 	leaderboard_dialog.get_ok_button().text = "Close"
+	leaderboard_dialog.dialog_hide_on_ok = false
+	leaderboard_dialog.confirmed.connect(func() -> void: MenuSlide.dismiss(leaderboard_dialog))
 	add_child(leaderboard_dialog)
+	MenuSlide.install_popup(leaderboard_dialog)
 	leaderboard_text = _label("")
 	leaderboard_text.custom_minimum_size = Vector2(480, 100)
 	leaderboard_dialog.add_child(leaderboard_text)
@@ -224,7 +227,7 @@ func _show_leaderboard(id: String) -> void:
 	leaderboard_level_id = str(entry.get("id", entry.get("source_id", "")))
 	leaderboard_dialog.title = "Top Times · " + str(entry.get("title", "Level")).left(64)
 	leaderboard_text.text = "Loading times..."
-	leaderboard_dialog.popup_centered(Vector2i(560, 0))
+	MenuSlide.popup(leaderboard_dialog, Vector2i(560, 0))
 	leaderboard_client.fetch_times(leaderboard_level_id)
 
 func _received_leaderboard(_code: int, payload: Dictionary, error: String) -> void:
@@ -232,9 +235,11 @@ func _received_leaderboard(_code: int, payload: Dictionary, error: String) -> vo
 		return
 	if not error.is_empty():
 		leaderboard_text.text = error
+		_fit_leaderboard.call_deferred()
 		return
 	if not payload.get("leaderboard") is Array:
 		leaderboard_text.text = "Times could not be loaded. Close and try again."
+		_fit_leaderboard.call_deferred()
 		return
 	var lines := PackedStringArray()
 	for entry in payload["leaderboard"].slice(0, 10):
@@ -246,7 +251,16 @@ func _received_leaderboard(_code: int, payload: Dictionary, error: String) -> vo
 	lines.append("")
 	lines.append("Your best: " + LevelTimes.format_time(payload.get("personal_time_ms")) if not _signed_in_user_id().is_empty() else "Sign in before starting a run to save your time.")
 	leaderboard_text.text = "\n".join(lines)
+	_fit_leaderboard.call_deferred()
 	time_records.cache_time(leaderboard_level_id, payload)
+
+func _fit_leaderboard() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if leaderboard_dialog.visible:
+		leaderboard_dialog.reset_size()
+		leaderboard_dialog.size.x = maxi(560, leaderboard_dialog.size.x)
+		MenuSlide.recenter(leaderboard_dialog)
 
 func _times_changed() -> void:
 	if not visible:
@@ -273,6 +287,7 @@ func _label(text: String) -> Label:
 
 func _button(text: String, callback: Callable) -> Button:
 	var button := TitleMenuButton.new()
+	button.segment = TitleMenuButton.Segment.ROUNDED
 	button.text = text
 	button.custom_minimum_size = Vector2(112, 50)
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -289,7 +304,7 @@ func _button_group(buttons: Array[Button]) -> HBoxContainer:
 	for index in range(buttons.size()):
 		var segment := TitleMenuButton.Segment.MIDDLE
 		if buttons.size() == 1:
-			segment = TitleMenuButton.Segment.SINGLE
+			segment = TitleMenuButton.Segment.ROUNDED
 		elif index == 0:
 			segment = TitleMenuButton.Segment.FIRST
 		elif index == buttons.size() - 1:
@@ -597,7 +612,7 @@ func _render_levels() -> void:
 				status.text = "%d published level%s" % [count, "" if count == 1 else "s"] if count > 0 else "You haven't published any levels yet. Upload a level from the level editor."
 		_:
 			if count > 0:
-				status.text = "%d available · %d / 100 published · newest first" % [count, remote_levels.size()]
+				status.text = "%d available / newest first" % count
 			elif not remote_levels.is_empty():
 				status.text = "No other community levels to show. Open My Levels or Saved Levels to play or host your levels."
 			else:

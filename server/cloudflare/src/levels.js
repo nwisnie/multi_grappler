@@ -4,7 +4,7 @@ import { requireUser } from "./accounts.js";
 const MAX_LEVELS = 100;
 const MAX_BODY = 20_480;
 // Keep in sync with LevelCodec and LevelDocument in the Godot client.
-const MAX_PAYLOAD = 6 + 1024 * 7 + 128 * 2 + 4 + 128 * 2 + 3 + 129 * 5;
+const MAX_PAYLOAD = 6 + 1024 * 7 + 128 * 2 + 4 + 128 * 2 + 3 + 129 * 6;
 const FULL = "The level library is full (100/100). No more levels can be uploaded right now.";
 
 function cell(x, y) { return x < 100 && y < 100; }
@@ -67,16 +67,21 @@ function validatePayload(bytes) {
       occupied.add(key);
     }
     if (offset < bytes.length) {
-      if (offset + 3 > bytes.length || bytes[offset++] !== 76) invalid();
+      if (offset + 3 > bytes.length) invalid();
+      const tag = bytes[offset++], typed = tag === 86;
+      if (tag !== 76 && !typed) invalid();
       const lines = bytes[offset++], spawnPercent = bytes[offset++];
-      if (lines < 1 || lines > count + 1 || spawnPercent > 100 || offset + lines * 5 !== bytes.length) invalid();
+      if (lines < 1 || lines > count + 1 || spawnPercent > 100 || offset + lines * (typed ? 6 : 5) !== bytes.length) invalid();
       const seen = new Set();
       for (let index = 0; index < lines; index++) {
         const number = bytes[offset++];
+        const vertices = typed ? bytes[offset++] : 0;
+        if (vertices > 1) invalid();
         const a = [bytes[offset++], bytes[offset++]], b = [bytes[offset++], bytes[offset++]];
-        if (number < 1 || number > count + 1 || seen.has(number) || !cell(...a) || !cell(...b) || same(a, b)) invalid();
+        const validPoint = point => vertices ? point.every(value => value <= 100) : cell(...point);
+        if (number < 1 || number > count + 1 || seen.has(number) || !validPoint(a) || !validPoint(b) || same(a, b)) invalid();
         seen.add(number);
-        if (number === 1) spawn = a.map((value, axis) => value + 0.5 + (b[axis] - value) * spawnPercent / 100);
+        if (number === 1) spawn = a.map((value, axis) => value + (vertices ? 0 : 0.5) + (b[axis] - value) * spawnPercent / 100);
       }
     }
   }
@@ -109,7 +114,7 @@ async function decodeCode(code, requireRace = false) {
     throw new RequestError("The level code is damaged or exceeds the level limits.");
   }
   const { hasRace } = validatePayload(payload);
-  if (requireRace && !hasRace) throw new RequestError("This level has no race to finish.");
+  if (requireRace && !hasRace) throw new RequestError("At least 2 checkpoints are required: the spawn and one race checkpoint.");
   return payload;
 }
 
@@ -205,7 +210,7 @@ export async function levels(request, env) {
     }
     const body = await readJson(request, MAX_BODY);
     const title = name(body.title, 64);
-    const payload = await decodeCode(body.level_code);
+    const payload = await decodeCode(body.level_code, true);
     const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
     const id = Array.from(hash, byte => byte.toString(16).padStart(2, "0")).join("");
     const createdAt = new Date().toISOString();

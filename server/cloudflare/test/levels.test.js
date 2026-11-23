@@ -8,7 +8,7 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 const ORIGIN = "https://wizkinews.com";
 const schema = ["0001_levels.sql", "0002_accounts.sql", "0003_level_times.sql"].map(path => readFileSync(new URL("../migrations/" + path, import.meta.url), "utf8")).join("\n");
 const encode = bytes => "MG1-" + deflateSync(Buffer.from(bytes)).toString("base64");
-const playable = (x = 10) => encode([1, 1, 0, 0, x, 2, 0, 0, 5, 100, 5]);
+const playable = (x = 10) => encode([1, 1, 0, 0, x, 2, 0, 0, 5, 100, 5, 82, 1, 1, 1, 20, 20]);
 const raceCode = (x = 10) => encode([1, 0, 0, 0, x, 2, 82, 1, 1, 2, 20, 20]);
 
 function timeRequest(mf, id, time, token = mf.testToken, extra = {}) {
@@ -121,8 +121,12 @@ test("times require a signed-in account, a published race, and bounded integer m
     assert.equal((await timeRequest(mf, id, time)).status, 400, String(time));
   }
   assert.equal((await timeRequest(mf, "0".repeat(64), 1000)).status, 404);
-  const nonrace = await (await upload(mf)).json();
-  assert.equal((await timeRequest(mf, nonrace.id, 1000)).status, 400);
+  // Existing untimed publications remain readable, but cannot accept race times.
+  const legacyId = "e".repeat(64);
+  await db.prepare("INSERT INTO levels (id, title, author, created_at, level_code) VALUES (?, ?, ?, ?, ?)")
+    .bind(legacyId, "Legacy untimed course", "Creator", "2026-01-01", encode([1, 0, 0, 0, 10, 2])).run();
+  assert.equal((await mf.dispatchFetch(`https://rooms.example/levels/${legacyId}`)).status, 200);
+  assert.equal((await timeRequest(mf, legacyId, 1000)).status, 400);
   assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM level_times").first("count"), 0);
   const token = await racer(db, 42);
   await db.prepare("UPDATE account_sessions SET expires_at = 0 WHERE user_id = 'racer-42'").run();
@@ -242,6 +246,29 @@ function upload(mf, levelCode = playable(), extra = {}) {
   });
 }
 
+test("publishing requires a second checkpoint for hoop and line spawns", async t => {
+  const { mf, db } = await runtime(t);
+  for (const bytes of [
+    [1, 0, 0, 0, 10, 10], // Original code format, spawn only.
+    [1, 0, 0, 0, 10, 10, 82, 0, 1, 1], // Explicit empty race trailer.
+    [1, 0, 0, 0, 10, 10, 82, 0, 50, 1], // Extra laps cannot replace a second checkpoint.
+    [1, 0, 0, 0, 10, 10, 82, 0, 1, 1, 76, 1, 50, 1, 5, 10, 15, 10], // Spawn line only.
+  ]) {
+    const response = await upload(mf, encode(bytes));
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /2 checkpoints/);
+  }
+  assert.equal(await db.prepare("SELECT COUNT(*) AS count FROM levels").first("count"), 0);
+  // Exactly two checkpoints work for either finish choice and either shape.
+  for (const code of [playable(), raceCode(), encode([1, 0, 0, 0, 10, 10, 82, 1, 1, 2, 20, 10,
+    76, 2, 50, 1, 10, 6, 10, 14, 2, 20, 6, 20, 14])]) {
+    const response = await upload(mf, code);
+    assert.equal(response.status, 201, await response.clone().text());
+    const { id } = await response.json();
+    assert.equal((await timeRequest(mf, id, 1000)).status, 200, "Every accepted minimum course can store a completion time");
+  }
+});
+
 test("publish, browse newest metadata, download exact level, and retry idempotently", async t => {
   const { mf, db } = await runtime(t);
   const empty = await mf.dispatchFetch("https://rooms.example/levels");
@@ -254,7 +281,7 @@ test("publish, browse newest metadata, download exact level, and retry idempoten
   const duplicate = await upload(mf, playable(), { title: "Retry" });
   assert.equal(duplicate.status, 200);
   assert.deepEqual(await duplicate.json(), { id, duplicate: true });
-  const differentlyCompressed = "MG1-" + deflateSync(Buffer.from([1, 1, 0, 0, 10, 2, 0, 0, 5, 100, 5]), { level: 0 }).toString("base64");
+  const differentlyCompressed = "MG1-" + deflateSync(Buffer.from([1, 1, 0, 0, 10, 2, 0, 0, 5, 100, 5, 82, 1, 1, 1, 20, 20]), { level: 0 }).toString("base64");
   const compressedRetry = await upload(mf, differentlyCompressed);
   assert.deepEqual(await compressedRetry.json(), { id, duplicate: true });
   await upload(mf, playable(11), { title: "Second course", author: "" });
@@ -276,7 +303,7 @@ test("publish, browse newest metadata, download exact level, and retry idempoten
 test("concurrent uploads stop at 100, retain existing levels, allow duplicate retry at capacity", async t => {
   const { mf, db } = await runtime(t);
   // Distinct valid levels: different spawn cells, all clear of the terrain.
-  const code = index => encode([1, 1, 0, 0, index % 100, 10 + Math.floor(index / 100), 0, 0, 5, 100, 5]);
+  const code = index => encode([1, 1, 0, 0, index % 100, 10 + Math.floor(index / 100), 0, 0, 5, 100, 5, 82, 1, 1, 1, 20, 20]);
   const responses = await Promise.all(Array.from({ length: 110 }, (_, index) => upload(mf, code(index))));
   assert.equal(responses.filter(response => response.status === 201).length, 100);
   assert.equal(responses.filter(response => response.status === 409).length, 10);
@@ -349,8 +376,6 @@ test("publish and download mixed checkpoint lines with a chosen spawn position",
   const { id } = await response.json();
   const downloaded = await (await mf.dispatchFetch(`https://rooms.example/levels/${id}`)).json();
   assert.equal(downloaded.level.level_code, code);
-  const spawnOnly = encode([1, 0, 0, 0, 10, 10, 82, 0, 1, 1, 76, 1, 50, 1, 5, 10, 15, 10]);
-  assert.equal((await upload(mf, spawnOnly)).status, 201);
 });
 
 test("reject malformed checkpoint lines and check terrain at the actual line spawn", async t => {
@@ -366,7 +391,7 @@ test("reject malformed checkpoint lines and check terrain at the actual line spa
     assert.equal((await upload(mf, encode([...base, ...trailer]))).status, 400, JSON.stringify(trailer));
   }
   const lineSpawn = (terrainY, percent) => encode([1, 1, 0, 0, 10, 10, 0, 5, terrainY, 15, terrainY,
-    82, 0, 1, 1, 76, 1, percent, 1, 10, 2, 10, 18]);
+    82, 1, 1, 1, 20, 20, 76, 1, percent, 1, 10, 2, 10, 18]);
   assert.equal((await upload(mf, lineSpawn(10, 0))).status, 201, "Line may cross terrain away from the spawn point");
   assert.equal((await upload(mf, lineSpawn(10, 50))).status, 400, "Midpoint spawn intersects terrain");
   assert.equal((await upload(mf, lineSpawn(2, 0))).status, 400, "Endpoint spawn intersects terrain even though the center is clear");
@@ -382,6 +407,41 @@ test("accept maximum terrain, orbs and all 129 checkpoint lines", async t => {
   for (let index = 0; index < 128; index++) bytes.push(index % 100, 60 + Math.floor(index / 100));
   bytes.push(76, 129, 50, 1, 10, 1, 10, 3);
   for (let index = 0; index < 128; index++) bytes.push(index + 2, index % 100, 60, index % 100, 62);
+  const response = await upload(mf, encode(bytes));
+  assert.equal(response.status, 201, await response.clone().text());
+});
+
+test("vertex checkpoint lines support grid edges, mixed legacy lines, and actual spawn clearance", async t => {
+  const { mf } = await runtime(t);
+  const base = [1, 0, 0, 0, 10, 10, 82, 1, 1, 2, 20, 10];
+  const code = encode([...base, 86, 2, 25, 1, 0, 10, 6, 10, 14, 2, 1, 20, 0, 20, 100]);
+  const published = await upload(mf, code);
+  assert.equal(published.status, 201, await published.clone().text());
+  const { id } = await published.json();
+  assert.equal((await (await mf.dispatchFetch(`https://rooms.example/levels/${id}`)).json()).level.level_code, code);
+  assert.equal((await timeRequest(mf, id, 1000)).status, 200);
+  for (const trailer of [
+    [86, 1, 50, 2, 2, 20, 0, 20, 100], // Invalid coordinate kind.
+    [86, 1, 50, 2, 1, 20, 0, 20, 101], // Vertex outside the board.
+    [86, 1, 50, 2, 0, 20, 0, 20, 100], // Legacy centers cannot use coordinate 100.
+    [86, 1, 50, 2, 1, 20, 0, 20, 0], // Coincident endpoints.
+    [86, 1, 50, 2, 1, 20, 0, 20], // Truncation.
+  ]) assert.equal((await upload(mf, encode([...base, ...trailer]))).status, 400);
+  const spawn = percent => encode([1, 1, 0, 0, 10, 10, 0, 5, 10, 15, 10,
+    82, 1, 1, 1, 20, 20, 86, 1, percent, 1, 1, 10, 2, 10, 18]);
+  assert.equal((await upload(mf, spawn(0))).status, 201);
+  assert.equal((await upload(mf, spawn(50))).status, 400, "Vertex spawn clearance uses the actual selected point");
+});
+
+test("maximum payload includes all 129 vertex checkpoint lines", async t => {
+  const { mf } = await runtime(t);
+  const bytes = [1, 0, 4, 128, 10, 2];
+  for (let index = 0; index < 1024; index++) bytes.push(1, 1, 30, 3, 30, 2, 29);
+  for (let index = 0; index < 128; index++) bytes.push(index % 100, 50 + Math.floor(index / 100));
+  bytes.push(82, 128, 50, 1);
+  for (let index = 0; index < 128; index++) bytes.push(index % 100, 60 + Math.floor(index / 100));
+  bytes.push(86, 129, 50, 1, 1, 10, 1, 10, 3);
+  for (let index = 0; index < 128; index++) bytes.push(index + 2, 1, index % 100, 60, index % 100, 62);
   const response = await upload(mf, encode(bytes));
   assert.equal(response.status, 201, await response.clone().text());
 });

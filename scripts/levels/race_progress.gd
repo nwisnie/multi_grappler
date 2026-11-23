@@ -34,8 +34,7 @@ func _ready() -> void:
 		hoop.is_finish = index + 1 == document.finish_checkpoint
 		hoop.position = document.checkpoint_position(index + 1)
 		if document.checkpoint_lines.has(index + 1):
-			var line: Dictionary = document.checkpoint_lines[index + 1]
-			hoop.line_points = PackedVector2Array([LevelDocument.cell_position(line["a"]) - hoop.position, LevelDocument.cell_position(line["b"]) - hoop.position])
+			hoop.line_points = PackedVector2Array([document.checkpoint_endpoint(index + 1, "a") - hoop.position, document.checkpoint_endpoint(index + 1, "b") - hoop.position])
 		add_child(hoop)
 		hoops.append(hoop)
 	var layer := CanvasLayer.new()
@@ -60,8 +59,7 @@ func reset() -> void:
 
 func next_position() -> Vector2:
 	if document.checkpoint_lines.has(next_number):
-		var line: Dictionary = document.checkpoint_lines[next_number]
-		return Geometry2D.get_closest_point_to_segment(player.global_position, LevelDocument.cell_position(line["a"]), LevelDocument.cell_position(line["b"]))
+		return Geometry2D.get_closest_point_to_segment(player.global_position, document.checkpoint_endpoint(next_number, "a"), document.checkpoint_endpoint(next_number, "b"))
 	return hoops[next_number - 1].global_position
 
 func _physics_process(delta: float) -> void:
@@ -97,9 +95,8 @@ func _crossing_fraction(from: Vector2, to: Vector2) -> float:
 	if not document.checkpoint_lines.has(next_number):
 		return _circle_entry(from, motion, hoops[next_number - 1].global_position, PASS_RADIUS)
 	# A swept ball against a finite line is a capsule: a strip plus two end caps.
-	var line: Dictionary = document.checkpoint_lines[next_number]
-	var a := LevelDocument.cell_position(line["a"])
-	var b := LevelDocument.cell_position(line["b"])
+	var a := document.checkpoint_endpoint(next_number, "a")
+	var b := document.checkpoint_endpoint(next_number, "b")
 	var radius := LevelDocument.PLAYER_RADIUS
 	if from.distance_squared_to(Geometry2D.get_closest_point_to_segment(from, a, b)) <= radius * radius:
 		return -1.0

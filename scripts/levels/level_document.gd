@@ -20,7 +20,7 @@ var spawn := Vector2i(-1, -1)
 var orbs: Array[Vector2i] = []
 ## Array order is race order; the spawn is always checkpoint 1.
 var checkpoints: Array[Vector2i] = []
-## Optional line endpoints (cell centers), keyed by race number including spawn 1.
+## Line endpoints keyed by race number. New lines use vertices; old codes retain cell centers.
 var checkpoint_lines: Dictionary = {}
 ## Percentage along the spawn line, from endpoint A to B.
 var spawn_line_position := 50
@@ -95,19 +95,23 @@ func checkpoint_cell(number: int) -> Vector2i:
 
 func checkpoint_position(number: int) -> Vector2:
 	if checkpoint_lines.has(number):
-		var line: Dictionary = checkpoint_lines[number]
-		return (cell_position(line["a"]) + cell_position(line["b"])) * 0.5
+		return (checkpoint_endpoint(number, "a") + checkpoint_endpoint(number, "b")) * 0.5
 	return cell_position(checkpoint_cell(number))
+
+func checkpoint_endpoint(number: int, key: String) -> Vector2:
+	var line: Dictionary = checkpoint_lines[number]
+	return vertex_position(line[key]) if line.get("vertices", false) else cell_position(line[key])
 
 func spawn_position() -> Vector2:
 	if checkpoint_lines.has(1):
-		var line: Dictionary = checkpoint_lines[1]
-		return cell_position(line["a"]).lerp(cell_position(line["b"]), spawn_line_position / 100.0)
+		return checkpoint_endpoint(1, "a").lerp(checkpoint_endpoint(1, "b"), spawn_line_position / 100.0)
 	return cell_position(spawn)
 
-func set_checkpoint_line(number: int, a: Vector2i, b: Vector2i) -> void:
+func set_checkpoint_line(number: int, a: Vector2i, b: Vector2i, vertices: bool = true) -> void:
 	checkpoint_lines[number] = {"a": a, "b": b}
-	var center := snap_cell((cell_position(a) + cell_position(b)) * 0.5)
+	if vertices:
+		checkpoint_lines[number]["vertices"] = true
+	var center := snap_cell(checkpoint_position(number))
 	if number == 1:
 		spawn = center
 	else:
@@ -117,7 +121,7 @@ func move_checkpoint(number: int, point: Vector2i) -> void:
 	if checkpoint_lines.has(number):
 		var offset := point - checkpoint_cell(number)
 		var line: Dictionary = checkpoint_lines[number]
-		set_checkpoint_line(number, line["a"] + offset, line["b"] + offset)
+		set_checkpoint_line(number, line["a"] + offset, line["b"] + offset, line.get("vertices", false))
 	elif number == 1:
 		spawn = point
 	else:
@@ -216,9 +220,13 @@ func validate() -> String:
 		if typeof(checkpoint_lines[number]) != TYPE_DICTIONARY:
 			return "A checkpoint line needs two endpoints."
 		var line: Dictionary = checkpoint_lines[number]
+		if line.has("vertices") and typeof(line["vertices"]) != TYPE_BOOL:
+			return "Invalid checkpoint line coordinate type."
 		for key in ["a", "b"]:
-			if not line.has(key) or typeof(line[key]) != TYPE_VECTOR2I or not valid_cell(line[key]):
-				return "Checkpoint line endpoints must be cells inside the grid."
+			if not line.has(key) or typeof(line[key]) != TYPE_VECTOR2I:
+				return "Checkpoint line endpoints must be grid points."
+			if not (valid_vertex(line[key]) if line.get("vertices", false) else valid_cell(line[key])):
+				return "Checkpoint line endpoints must be inside the grid."
 		if line["a"] == line["b"]:
 			return "Choose two different checkpoint line endpoints."
 	var occupied := {}
@@ -241,6 +249,14 @@ func validate() -> String:
 		var error := segment_error(segment)
 		if not error.is_empty():
 			return error
+	return ""
+
+func publication_error() -> String:
+	var error := playtest_error()
+	if not error.is_empty():
+		return error
+	if checkpoints.is_empty():
+		return "Publishing requires at least 2 checkpoints. Add a Race checkpoint in addition to the spawn."
 	return ""
 
 func playtest_error() -> String:

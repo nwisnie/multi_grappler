@@ -10,6 +10,11 @@ account prompt, then returns to the upload form. The creator name comes from the
 signed-in account. Browsing, playing, editing, and multiplayer remain available without
 an account.
 
+Publishing requires at least **two checkpoints**: the spawn (checkpoint 1) and at
+least one additional **Race checkpoint**, so the level can be timed.
+Line checkpoint endpoints snap to grid intersections like terrain endpoints. Existing
+level codes retain their original checkpoint positions.
+
 Signed-in creators can delete their uploads from **My Levels → Delete**. Confirmation
 permanently removes the published level and all players' times and records. Previously
 downloaded copies remain playable in Saved Levels.

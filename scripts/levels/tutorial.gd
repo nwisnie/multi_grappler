@@ -2,6 +2,7 @@ extends Node2D
 ## Editable Area2D polygons select the built-in tutorial's current instruction.
 
 signal completed
+signal restart_requested
 
 const InstructionArea := preload("res://scripts/levels/tutorial_instruction_area.gd")
 const PASS_RADIUS := LevelDocument.CHECKPOINT_RADIUS + LevelDocument.PLAYER_RADIUS
@@ -9,6 +10,8 @@ const PASS_RADIUS := LevelDocument.CHECKPOINT_RADIUS + LevelDocument.PLAYER_RADI
 ## Vertical wave height in pixels.
 @export_range(0.0, 20.0, 0.5) var wave_amplitude := 6.0
 @export_range(0.1, 10.0, 0.1) var wave_frequency := 2.4
+## Falling past this local Y coordinate restarts the tutorial.
+@export var fall_limit_y := 3000.0
 
 @onready var player: RigidBody2D = $Ball
 @onready var instruction_label: RichTextLabel = $TutorialInstructions/Instruction
@@ -17,6 +20,7 @@ const PASS_RADIUS := LevelDocument.CHECKPOINT_RADIUS + LevelDocument.PLAYER_RADI
 var active_areas: Array[InstructionArea] = []
 var current_instruction := ""
 var finished := false
+var restart_pending := false
 var previous_position := Vector2.ZERO
 
 func _ready() -> void:
@@ -33,7 +37,13 @@ func _ready() -> void:
 	_update_instruction()
 
 func _physics_process(_delta: float) -> void:
-	if finished:
+	if finished or restart_pending:
+		return
+	# A full-width boundary also catches fast falls that could skip an Area2D.
+	if player.position.y >= fall_limit_y:
+		restart_pending = true
+		player.set_controls_locked(true)
+		restart_requested.emit()
 		return
 	var current_position := player.global_position
 	if not player.controls_locked:

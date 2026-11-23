@@ -585,19 +585,19 @@ func _build_pause_menu() -> void:
 	var column := _column(pause_dialog)
 	resume_button = _button("Resume", resume_game)
 	column.add_child(resume_button)
-	column.add_child(_button("Return to Main Menu", show_main_menu))
-	column.add_child(_button("Settings", show_settings))
 	pause_editor_button = _button("Back to Level Editor", show_editor)
 	pause_restart_button = _button("Restart Level", _restart_playtest)
 	pause_browser_button = _button("Back to Browse Levels", _return_to_level_browser)
+	column.add_child(pause_editor_button)
+	column.add_child(pause_browser_button)
+	column.add_child(pause_restart_button)
 	pause_save_button = _button("Save Level", _save_current_level)
 	pause_save_message = _label("")
 	pause_save_message.hide()
 	column.add_child(pause_save_button)
 	column.add_child(pause_save_message)
-	column.add_child(pause_editor_button)
-	column.add_child(pause_browser_button)
-	column.add_child(pause_restart_button)
+	column.add_child(_button("Return to Main Menu", show_main_menu))
+	column.add_child(_button("Settings", show_settings))
 
 func _build_tutorial_complete_menu() -> void:
 	tutorial_complete_dialog = _dialog("Tutorial Complete!", "", false)
@@ -630,7 +630,7 @@ func _build_settings_menu() -> void:
 	camera_zoom_slider = HSlider.new()
 	camera_zoom_slider.custom_minimum_size.y = 32
 	camera_zoom_slider.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	camera_zoom_slider.min_value = 0.45
+	camera_zoom_slider.min_value = 0.15
 	camera_zoom_slider.max_value = 0.85
 	camera_zoom_slider.step = 0.01
 	camera_zoom_slider.value = camera_zoom
@@ -864,8 +864,16 @@ func show_demo() -> void:
 	world = DemoScene.instantiate()
 	world.process_mode = Node.PROCESS_MODE_PAUSABLE
 	world.completed.connect(_show_tutorial_complete, CONNECT_DEFERRED)
+	world.restart_requested.connect(_restart_fallen_tutorial.bind(world), CONNECT_DEFERRED)
 	add_child(world)
 	_apply_player_settings(_player())
+
+func _restart_fallen_tutorial(tutorial: Node) -> void:
+	if screen != Screen.TUTORIAL or world != tutorial:
+		return
+	show_demo()
+	_player().set_controls_locked(true)
+	resume_waiting_for_release = true
 
 func show_editor() -> void:
 	_clear_menus()
