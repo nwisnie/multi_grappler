@@ -40,7 +40,7 @@ func _account_changed() -> void:
 
 static func format_time(milliseconds: Variant) -> String:
 	if typeof(milliseconds) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(milliseconds)) or float(milliseconds) < 0:
-		return "—"
+		return "-"
 	var value := int(milliseconds)
 	return "%02d:%02d.%03d" % [value / 60000, (value / 1000) % 60, value % 1000]
 

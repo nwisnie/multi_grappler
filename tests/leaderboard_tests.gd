@@ -52,7 +52,7 @@ func _run() -> void:
 	var account := root.get_node("AccountSession")
 	account.invalidate()
 	check(LevelTimes.format_time(61023) == "01:01.023", "Times preserve millisecond precision across minutes")
-	check(LevelTimes.format_time(null) == "—", "Absent times have a distinct placeholder")
+	check(LevelTimes.format_time(null) == "-", "Absent times use a placeholder supported by the game font")
 	DirAccess.remove_absolute(TEST_PATH)
 	var shell = load("res://scenes/game_shell.tscn").instantiate()
 	shell.saved_levels = SavedLevels.new(TEST_PATH)

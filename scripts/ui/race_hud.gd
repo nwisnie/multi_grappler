@@ -38,7 +38,7 @@ func _process(delta: float) -> void:
 	if race.finished:
 		status.text = "Race finished!\n" + time
 	else:
-		var destination := "Finish · #%d" % race.next_number if race.next_number == race.document.finish_checkpoint else "Next hoop · #%d" % race.next_number
+		var destination := "Finish #%d" % race.next_number if race.next_number == race.document.finish_checkpoint else "Next hoop #%d" % race.next_number
 		status.text = "Lap %d / %d\n%s\n%s" % [race.lap, race.document.race_laps, destination, time]
 	if is_instance_valid(race.time_records) and not race.leaderboard_id.is_empty():
 		var summary: Dictionary = race.time_records.summary(race.leaderboard_id)

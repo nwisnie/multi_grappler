@@ -225,7 +225,7 @@ func _build_leaderboard() -> void:
 func _show_leaderboard(id: String) -> void:
 	var entry: Dictionary = entries.get(id, {})
 	leaderboard_level_id = str(entry.get("id", entry.get("source_id", "")))
-	leaderboard_dialog.title = "Top Times · " + str(entry.get("title", "Level")).left(64)
+	leaderboard_dialog.title = "Top Times - " + str(entry.get("title", "Level")).left(64)
 	leaderboard_text.text = "Loading times..."
 	MenuSlide.popup(leaderboard_dialog, Vector2i(560, 0))
 	leaderboard_client.fetch_times(leaderboard_level_id)
@@ -245,7 +245,7 @@ func _received_leaderboard(_code: int, payload: Dictionary, error: String) -> vo
 	for entry in payload["leaderboard"].slice(0, 10):
 		if entry is Dictionary:
 			var yours := " (you)" if entry.get("user_id", "") == _signed_in_user_id() else ""
-			lines.append("%d.  %s%s  ·  %s" % [int(entry.get("rank", lines.size() + 1)), str(entry.get("username", "Player")).left(24), yours, LevelTimes.format_time(entry.get("time_ms"))])
+			lines.append("%d.  %s%s  -  %s" % [int(entry.get("rank", lines.size() + 1)), str(entry.get("username", "Player")).left(24), yours, LevelTimes.format_time(entry.get("time_ms"))])
 	if lines.is_empty():
 		lines.append("No times yet. Be the first to finish!")
 	lines.append("")

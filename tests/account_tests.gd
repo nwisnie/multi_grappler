@@ -41,11 +41,13 @@ func _run() -> void:
 	for frame in range(4):
 		await process_frame
 	check(dialog.password_input.secret and dialog.confirm_password.secret, "Password inputs are masked")
+	check(dialog.password_input.secret_character == "*" and dialog.confirm_password.secret_character == "*", "Both password inputs use a mask supported by the game font")
+	check(dialog.username_input.placeholder_text.begins_with("3-24") and dialog.password_input.placeholder_text.begins_with("4-32"), "Account placeholders use ASCII hyphens in length ranges")
 	check(dialog.size.y < root.get_visible_rect().size.y, "Registration form fits on screen")
 	dialog.username_input.text = "ValidUser"
 	dialog.password_input.text = "abc"
 	dialog._submit()
-	check(dialog.message.text.contains("4–32"), "Creation explains password length")
+	check(dialog.message.text.contains("4-32"), "Creation explains password length")
 	dialog.password_input.text = "A long test password."
 	dialog.confirm_password.text = "A different password."
 	dialog._submit()

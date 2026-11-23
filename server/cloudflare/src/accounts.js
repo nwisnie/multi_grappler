@@ -74,9 +74,9 @@ export async function accounts(request, env) {
     }
     const body = await readJson(request, 2048);
     const username = typeof body.username === "string" ? body.username.trim() : "";
-    if (!/^[A-Za-z0-9_]{3,24}$/.test(username)) throw new RequestError("Use 3–24 letters, numbers, or underscores for your username.");
+    if (!/^[A-Za-z0-9_]{3,24}$/.test(username)) throw new RequestError("Use 3-24 letters, numbers, or underscores for your username.");
     if (typeof body.password !== "string" || Array.from(body.password).length < 4 || Array.from(body.password).length > 32) {
-      throw new RequestError("Use a password with 4–32 characters.");
+      throw new RequestError("Use a password with 4-32 characters.");
     }
     const usernameKey = username.toLowerCase();
     if (!(await env.AUTH_LIMITER.limit({ key: "user:" + usernameKey })).success) throw new RequestError("Too many account requests. Try again in a minute.", 429);

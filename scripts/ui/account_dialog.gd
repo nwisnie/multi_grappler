@@ -48,19 +48,21 @@ func _ready() -> void:
 	form.add_child(_label("Username"))
 	username_input = LineEdit.new()
 	username_input.max_length = 24
-	username_input.placeholder_text = "3–24 letters, numbers, or underscores"
+	username_input.placeholder_text = "3-24 letters, numbers, or underscores"
 	form.add_child(username_input)
 	form.add_child(_label("Password"))
 	password_input = LineEdit.new()
 	password_input.secret = true
+	password_input.secret_character = "*"
 	password_input.max_length = 32
-	password_input.placeholder_text = "4–32 characters"
+	password_input.placeholder_text = "4-32 characters"
 	password_input.text_submitted.connect(func(_text: String) -> void: _submit())
 	form.add_child(password_input)
 	confirm_label = _label("Confirm password")
 	form.add_child(confirm_label)
 	confirm_password = LineEdit.new()
 	confirm_password.secret = true
+	confirm_password.secret_character = "*"
 	confirm_password.max_length = 32
 	confirm_password.text_submitted.connect(func(_text: String) -> void: _submit())
 	form.add_child(confirm_password)
@@ -129,7 +131,7 @@ func _apply_form(create: bool) -> void:
 	password_input.clear()
 	confirm_password.clear()
 	switch_button.text = "Sign in" if create else "Create account"
-	message.text = "Choose a username and a password with 4–32 characters." if create else "Sign in with your username and password."
+	message.text = "Choose a username and a password with 4-32 characters." if create else "Sign in with your username and password."
 	_fit.call_deferred()
 	username_input.grab_focus.call_deferred()
 
@@ -149,9 +151,9 @@ func _submit() -> void:
 	var valid_username := RegEx.new()
 	valid_username.compile("^[A-Za-z0-9_]{3,24}$")
 	if valid_username.search(username_input.text.strip_edges()) == null:
-		message.text = "Use 3–24 letters, numbers, or underscores for your username."
+		message.text = "Use 3-24 letters, numbers, or underscores for your username."
 	elif password_input.text.length() < 4 or password_input.text.length() > 32:
-		message.text = "Use a password with 4–32 characters."
+		message.text = "Use a password with 4-32 characters."
 	elif creating and password_input.text != confirm_password.text:
 		message.text = "The passwords do not match."
 	else:

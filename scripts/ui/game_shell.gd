@@ -442,12 +442,12 @@ func _public_lobbies_received(result: int, response_code: int, _headers: PackedS
 			continue
 		var code := str(entry["room"])
 		var game_name := str(entry.get("name", "My game")).replace("\n", " ").replace("\r", " ").left(32)
-		var button := _button("%s · %d/%d%s" % [game_name, count, limit, " · Full" if count == limit else ""], _join_public_lobby.bind(code))
+		var button := _button("%s - %d/%d%s" % [game_name, count, limit, " - Full" if count == limit else ""], _join_public_lobby.bind(code))
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.clip_text = true
 		button.disabled = count == limit
 		public_lobbies.add_child(button)
-	public_lobby_status.text = "%d public lobbies · select one to join" % public_lobbies.get_child_count() if public_lobbies.get_child_count() > 0 else "No public lobbies yet. Host one or join by code."
+	public_lobby_status.text = "%d public lobbies - select one to join" % public_lobbies.get_child_count() if public_lobbies.get_child_count() > 0 else "No public lobbies yet. Host one or join by code."
 
 func _join_public_lobby(code: String) -> void:
 	room_code.text = code
